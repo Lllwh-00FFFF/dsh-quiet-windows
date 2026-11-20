@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "静默窗口",
+    "description": "在屏幕外启动并操作 Windows 图形界面：窗口停在你所有显示器之外，用 UI Automation 读取与点击、用 PrintWindow 截图，全程不占你的桌面、不抢键盘焦点。",
+    "detail": "docs/DETAIL.md"
+  }
+}

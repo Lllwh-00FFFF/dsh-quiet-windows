@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Quiet windows",
+    "description": "Launch and drive Windows GUI apps entirely off-screen: the window lives outside every monitor, is read and clicked through UI Automation, and is captured with PrintWindow, so it never covers your desktop or steals focus.",
+    "detail": "docs/DETAIL.md"
+  }
+}
