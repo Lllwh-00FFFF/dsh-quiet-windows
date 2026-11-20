@@ -1,0 +1,44 @@
+{
+  "name": "dsh-quiet-windows",
+  "version": "0.2.2",
+  "private": false,
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "helper",
+    "tests",
+    "locale",
+    "docs",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "description": "Drive Windows GUI apps entirely off-screen: launch outside every monitor, read and click through UI Automation, capture with PrintWindow, and keep the desktop and keyboard focus for the user.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-harness",
+    "windows",
+    "ui-automation",
+    "computer-use",
+    "background-automation",
+    "screen-capture",
+    "printwindow"
+  ],
+  "license": "MIT"
+}

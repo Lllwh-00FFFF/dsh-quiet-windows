@@ -1,0 +1,7 @@
+node_modules/
+helper/__pycache__/
+tests/__pycache__/
+*.pyc
+*.tgz
+.dsh-quiet/
+_regress.png
