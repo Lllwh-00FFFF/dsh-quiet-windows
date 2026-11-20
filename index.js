@@ -265,7 +265,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_launch',
     isConcurrencySafe: () => false,
-    description: '在屏幕外启动一个 GUI 程序：窗口从创建起就停在你所有显示器之外，全程不上屏，并尽量避免抢键盘焦点（被发现抢走会还回去），返回它的 hwnd。之后就配合 quiet_shot / quiet_tree / quiet_act 操作它。浏览器默认使用独立 profile，避免寄生到你已开的浏览器进程。',
+    description: '在屏幕外启动一个 GUI 程序：窗口从创建起就停在你所有显示器之外，全程不上屏，并尽量避免抢键盘焦点（被发现抢走会还回去），返回它的 hwnd。之后就配合 quiet_shot / quiet_tree / quiet_act 操作它。浏览器默认使用独立 profile，避免寄生到你已开的浏览器进程。要打开任何界面程序都用这个，不要用 Start-Process、cmd、手写 CreateProcess 或 ShowWindow。',
     parameters: {
       type: 'object',
       properties: {
@@ -375,7 +375,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_shot',
     isConcurrencySafe: () => true,
-    description: '截取指定窗口当前的画面并存成 PNG，返回路径。截图来自窗口自己的渲染表面，因此即使窗口在屏幕外、被别的窗口完全盖住也能拿到；窗口被最小化时可能变黑（looks_blank 会标出来）。',
+    description: '截取指定窗口当前的画面并存成 PNG，返回路径。截图来自窗口自己的渲染表面，因此即使窗口在屏幕外、被别的窗口完全盖住也能拿到；窗口被最小化时可能变黑（looks_blank 会标出来）。要截任何窗口都用这个，不要用 CopyFromScreen、ImageGrab、BitBlt 或 PrintWindow 手写脚本——它们要么要求窗口在屏上、要么会带上遮挡、要么 DPI 不对。',
     parameters: {
       type: 'object',
       properties: { hwnd: { type: 'number', description: '窗口句柄，来自 quiet_launch 或 quiet_windows。' } },
@@ -416,7 +416,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_tree',
     isConcurrencySafe: () => true,
-    description: '读取窗口的 UI Automation 控件树：每个控件的类型、文字、class、AutomationId、可用模式（invoke / value / selectionitem / toggle / expandcollapse）。先看树，再用 quiet_act 按控件操作，不要猜坐标。',
+    description: '读取窗口的 UI Automation 控件树：每个控件的类型、文字、class、AutomationId、可用模式（invoke / value / selectionitem / toggle / expandcollapse）。先看树，再用 quiet_act 按控件操作，不要猜坐标。读控件树本身也用它，不要自己 pip install uiautomation 再写脚本。',
     parameters: {
       type: 'object',
       properties: {
@@ -450,7 +450,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_act',
     isConcurrencySafe: () => false,
-    description: '对控件执行一次操作，走控件自身的 UI Automation 模式（invoke / set / select / toggle / expand / collapse），不需要窗口在前台、不用坐标点击，通常不会把窗口搬到屏幕内。按 name / auto_id / class / type 定位控件，至少给一个；动作期间若键盘焦点被抢会试图还回去——是“尽量不打扰”，不是零干扰保证。',
+    description: '对控件执行一次操作，走控件自身的 UI Automation 模式（invoke / set / select / toggle / expand / collapse），不需要窗口在前台、不用坐标点击，通常不会把窗口搬到屏幕内。按 name / auto_id / class / type 定位控件，至少给一个；动作期间若键盘焦点被抢会试图还回去——是“尽量不打扰”，不是零干扰保证。点按钮、填输入框都用这个，不要用 SetCursorPos + mouse_event 点坐标，也不要 SendKeys。',
     parameters: {
       type: 'object',
       properties: {
