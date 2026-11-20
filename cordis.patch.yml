@@ -1,0 +1,11 @@
+# dsh-quiet-windows：把「安静窗口」工具行插入 profile。
+# 可选配置（覆盖本行 config 时整块替换）：
+#   - id: quiet-windows
+#     name: 'dsh-quiet-windows'
+#     config:
+#       pythonPath: C:\Python312\python.exe   # 非 PATH 时显式指定
+#       timeoutMs: 120000                     # 单次操作超时
+#       launchTimeoutMs: 180000               # 启动等待窗口的上限
+- insert:
+    - id: quiet-windows
+      name: 'dsh-quiet-windows'
