@@ -19,7 +19,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.14.0'
+          node-version: '22'
+          check-latest: true
           registry-url: 'https://registry.npmjs.org'
 
       # 可信发布要求 npm CLI >= 11.5.1，Node 22.14 自带的还是 10.x
