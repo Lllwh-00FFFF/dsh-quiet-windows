@@ -94,7 +94,7 @@ test('必需参数被写进 required', async () => {
   const { tools, ctx } = harness(failingSpawn());
   const { apply } = await import(MODULE);
   apply(ctx, {});
-  assert.deepEqual(tools.get('quiet_launch').parameters.required, ['exe']);
+  assert.deepEqual(tools.get('quiet_launch').parameters.required, []);
   assert.deepEqual(tools.get('quiet_act').parameters.required, ['hwnd', 'op']);
   assert.deepEqual(tools.get('quiet_shot').parameters.required, ['hwnd']);
   assert.deepEqual(tools.get('quiet_park').parameters.required, ['hwnd']);
@@ -195,6 +195,44 @@ test('quiet_park 能把一个已有窗口留在屏幕外（不抢焦点）', asy
     assert.equal(parked.ok, true, JSON.stringify(parked));
     assert.equal(parked.offscreen, true, 'park 之后必须在所有显示器之外');
     assert.ok(Array.isArray(parked.after) && parked.after.length === 4);
+  } finally {
+    await tools.get('quiet_close').execute({ hwnd: launched.hwnd, kill: true }, EXEC);
+  }
+});
+
+test('exe 和 url 都不给时给出能看懂的报错', async () => {
+  const { tools, ctx } = harness(failingSpawn());
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  await assert.rejects(
+    () => tools.get('quiet_launch').execute({}, EXEC),
+    /exe 和 url 至少要给一个/,
+  );
+});
+
+test('预览网页：只给 url 就能离屏打开并截图', async () => {
+  const { writeFileSync, mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const dir = mkdtempSync(join(tmpdir(), 'quiet-page-'));
+  const page = join(dir, 'page.html');
+  writeFileSync(page, '<!doctype html><meta charset="utf-8"><title>quiet preview</title>'
+    + '<body style="margin:0;background:#123456;color:#fff;font:40px sans-serif">'
+    + '<h1>quiet-windows preview</h1></body>', 'utf8');
+
+  const { tools, ctx } = harness(realSpawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, { launchTimeoutMs: 90000 });
+  const url = 'file:///' + page.replace(/\\/g, '/');
+
+  const launched = await tools.get('quiet_launch').execute({ url, width: 1000, height: 700 }, EXEC);
+  assert.equal(launched.ok, true, JSON.stringify(launched));
+  assert.equal(launched.offscreen, true, '浏览器窗口必须在屏幕外');
+  try {
+    const shot = await tools.get('quiet_shot').execute({ hwnd: launched.hwnd }, EXEC);
+    assert.equal(shot.ok, true, JSON.stringify(shot));
+    assert.notEqual(shot.looks_blank, true, '页面应该真的渲染出来了');
   } finally {
     await tools.get('quiet_close').execute({ hwnd: launched.hwnd, kill: true }, EXEC);
   }

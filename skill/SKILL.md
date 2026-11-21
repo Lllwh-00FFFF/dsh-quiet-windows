@@ -30,6 +30,19 @@ description: "Use for ANY task that involves a Windows GUI window — opening an
 
 > `hwnd` 不要求来自 `quiet_launch`：`quiet_shot` / `quiet_tree` / `quiet_act` 接受任何有效句柄。别因为"这个窗口不是我启动的"就放弃插件、回去手搓 PrintWindow / ImageGrab —— 那是 2026-11 那次 507 次调用零使用的直接原因。
 
+## 预览本地网页（localhost / file://）
+
+**别用会开可见窗口的浏览器通道**（wincu 的 browser lane、ego-browser、headed puppeteer）——它们会在用户屏幕上真的弹出一个窗口，等于把桌面占了。标准做法只有两步：
+
+```
+quiet_launch { url: "http://127.0.0.1:4173/", width: 1280, height: 860 }
+quiet_shot   { hwnd }
+```
+
+`quiet_launch` 只给 `url` 时会自动挑 Edge/Chrome，用独立 profile 离屏打开，并带上 `--disable-backgrounding-occluded-windows`、`--disable-renderer-backgrounding` 这类开关，所以离屏渲染不会变空白。
+
+刷新页面看改动：`quiet_tree` 找到地址栏（`auto_id` 常见是 `address-edit`）用 `quiet_act set` 写新 URL 回车；或者 `quiet_close` 掉重新 `quiet_launch`。
+
 ## 四条硬规则（违反就会打扰用户）
 
 - **不要用坐标点击，不要 SendKeys。** 窗口在虚拟屏幕之外，光标会被夹回屏幕内，坐标点击必然落空；而键盘输入会进到用户当前的窗口里。

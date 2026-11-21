@@ -471,15 +471,48 @@ def act(hwnd: int, op: str, value: str | None, selector: dict) -> dict:
 
 
 # --------------------------------------------------------------------- launch
-def launch(exe: str, args: list[str], width: int, height: int, timeout: float,
+BROWSER_PATHS = (
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+)
+
+
+def resolve_browser() -> str:
+    """预览网页时替用户挑一个浏览器：Edge 优先（Windows 上一定有）。"""
+    for path in BROWSER_PATHS:
+        if os.path.isfile(path):
+            return path
+    for name in ("msedge.exe", "chrome.exe", "brave.exe"):
+        found = shutil.which(name)
+        if found:
+            return found
+    raise FileNotFoundError(
+        "没找到可用的浏览器。请显式传 exe（例如 "
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" "）")
+
+
+def launch(exe: str | None, args: list[str], width: int, height: int, timeout: float,
            title_re: str | None, keep_hidden: bool, allow_activate: bool = False,
-           isolate: bool = True, keep_on_failure: bool = False) -> dict:
+           isolate: bool = True, keep_on_failure: bool = False,
+           url: str | None = None) -> dict:
+    if not exe:
+        if not url:
+            return {"ok": False, "error": "exe 和 url 至少要给一个"}
+        try:
+            exe = resolve_browser()
+        except FileNotFoundError as exc:
+            return {"ok": False, "error": str(exc)}
     name = os.path.basename(exe).lower()
     fg0 = win32gui.GetForegroundWindow()
     ox, oy = offscreen_origin(width, height)
     before = pids_of_image(name)
 
     extra = list(args)
+    if url:
+        extra.append(url)
     isolated_profile = None
     # 浏览器默认开独立 profile：否则已运行的浏览器会把新窗口收进旧进程，新进程立刻退出。
     # 那时我们既不知道窗口属于谁，close --kill 还可能把用户整个浏览器带走。
@@ -608,7 +641,9 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("launch")
-    p.add_argument("--exe", required=True)
+    p.add_argument("--exe", default=None)
+    p.add_argument("--url", default=None,
+                   help="只给网址时自动挑浏览器（Edge/Chrome），离屏打开")
     p.add_argument("--arg", action="append", default=[])
     # 参数里常带 '-' 开头（Chromium 开关就是），逐项 --arg 会被 argparse 当成选项，
     # 所以再给一个 JSON 数组入口。
@@ -674,7 +709,8 @@ def main() -> int:
                                  ensure_ascii=False))
                 return 2
         res = launch(a.exe, extra, a.width, a.height, a.timeout, a.title,
-                     a.keep_hidden, a.allow_activate, not a.no_isolate, a.keep_on_failure)
+                     a.keep_hidden, a.allow_activate, not a.no_isolate, a.keep_on_failure,
+                     url=a.url)
     elif a.cmd == "list":
         wins = [describe(h) for h in top_windows()
                 if win32gui.GetWindowText(h) and win32gui.IsWindowVisible(h)]
