@@ -247,6 +247,42 @@ def verify_pid(hwnd: int, expect: int | None) -> dict | None:
     return None
 
 
+def park_existing(hwnd: int, allow_activate: bool = False) -> dict:
+    """把一个已经在运行的窗口挪到所有显示器之外，不激活、不改大小。
+
+    这是「接管用户自己开的程序」的入口：先 park 到屏幕外，再 shot / tree / act，
+    全程不需要把窗口搬到屏幕内，也不会把用户的桌面顶掉。
+    """
+    if not win32gui.IsWindow(hwnd):
+        return {"ok": False, "hwnd": hwnd, "error": "窗口不存在（hwnd 已失效）"}
+    before_fg = win32gui.GetForegroundWindow()
+    before = describe(hwnd)
+    if before.get("error"):
+        return {"ok": False, "hwnd": hwnd, "error": before["error"]}
+
+    if win32gui.IsIconic(hwnd):
+        # 最小化窗口的矩形是 (-32000,-32000)，先就地恢复但不激活，否则挪动没有意义。
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+        time.sleep(0.35)
+
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    width, height = max(1, right - left), max(1, bottom - top)
+    x, y = offscreen_origin(width, height)
+    park(hwnd, x, y, activate=allow_activate)
+    time.sleep(0.25)
+
+    after = describe(hwnd)
+    return {
+        "ok": True,
+        "hwnd": hwnd,
+        "before": before.get("rect"),
+        "after": after.get("rect"),
+        "offscreen": after.get("offscreen"),
+        "focus_stolen": bool(before_fg != win32gui.GetForegroundWindow()),
+        "note": "窗口现在在所有显示器之外；用 shot / tree / act 操作它，收尾用 close。",
+    }
+
+
 # ------------------------------------------------------------------- capture
 def shot(hwnd: int, out: str) -> dict:
     """截窗口画面。PrintWindow 失败就不落盘 —— 半黑的图比"没有图"更容易骗到模型。"""
@@ -590,6 +626,11 @@ def main() -> int:
 
     sub.add_parser("list")
 
+    p = sub.add_parser("park")
+    p.add_argument("--hwnd", type=int, required=True)
+    p.add_argument("--expect-pid", type=int, default=None)
+    p.add_argument("--allow-activate", action="store_true")
+
     p = sub.add_parser("shot")
     p.add_argument("--hwnd", type=int, required=True)
     p.add_argument("--out", required=True)
@@ -637,11 +678,16 @@ def main() -> int:
     elif a.cmd == "list":
         wins = [describe(h) for h in top_windows()
                 if win32gui.GetWindowText(h) and win32gui.IsWindowVisible(h)]
+        # windows 是全部可见顶层窗口（含屏幕上的），offscreen 只是它的子集。
+        # 用户自己开着的程序从这里拿 hwnd，就能接着 park / shot / tree / act。
         res = {"ok": True, "monitors": monitors(),
                "dpi": ctypes.windll.user32.GetDpiForSystem(),
                "foreground": describe(win32gui.GetForegroundWindow()),
+               "windows": wins[:200],
                "offscreen": [w for w in wins if w.get("offscreen")],
                "count": len(wins)}
+    elif a.cmd == "park":
+        res = verify_pid(a.hwnd, a.expect_pid) or park_existing(a.hwnd, a.allow_activate)
     elif a.cmd == "shot":
         res = verify_pid(a.hwnd, a.expect_pid) or shot(a.hwnd, a.out)
     elif a.cmd == "tree":

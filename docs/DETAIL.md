@@ -7,19 +7,31 @@
 | 工具 | 作用 |
 |---|---|
 | `quiet_launch` | 在屏幕外启动程序，返回窗口句柄 `hwnd` |
-| `quiet_windows` | 列出所有屏幕外窗口，附带显示器布局、系统 DPI、前台窗口 |
+| `quiet_windows` | 列出**所有**可见顶层窗口（含屏幕上开着的），附带显示器布局、系统 DPI、前台窗口 |
+| `quiet_park` | 把已经在运行的窗口挪到屏幕外，不激活、不改大小 —— 用来接管用户自己开的程序 |
 | `quiet_shot` | 截图（PrintWindow）：窗口在屏幕外、被完全遮挡都拿得到画面 |
 | `quiet_tree` | 读 UI Automation 控件树：类型、文字、class、AutomationId、可用模式 |
 | `quiet_act` | 按控件执行 invoke / set / select / toggle / expand，不依赖前台与坐标 |
 | `quiet_close` | 收尾，先正常关闭再按需强杀 |
 
+`hwnd` 不要求由 `quiet_launch` 产生，`quiet_shot` / `quiet_tree` / `quiet_act` / `quiet_close` 接受任何有效句柄。
+
 ## 典型流程
+
+### A. 程序还没开
 
 1. `quiet_launch` 启动程序（网址、文件路径、启动参数一起给）。
 2. `quiet_shot` 看一眼当前画面，确认加载完成。
 3. `quiet_tree` 找到目标控件的名字或 `AutomationId`。
 4. `quiet_act` 直接操作那个控件（输入框用 `set`，按钮用 `invoke`，标签页用 `select`）。
 5. `quiet_close` 关掉它。
+
+### B. 程序已经开着（用户自己打开的，或者上一次会话留下的）
+
+1. `quiet_windows` 拿到 `hwnd`（`windows` 里有全部可见窗口，`offscreen` 只是子集）。
+2. `quiet_park` 把它挪到屏幕外——不激活、不改大小，用户的桌面不受打扰。
+3. 之后同上：`quiet_shot` / `quiet_tree` / `quiet_act`。
+4. 如果这个程序本来就是用户开着的、还要继续用，**别 `quiet_close`**：操作完保持原样即可（窗口留在屏幕外，用户下次从任务栏点它就回来了）。
 
 ## 运行前提
 

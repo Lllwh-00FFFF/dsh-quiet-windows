@@ -348,25 +348,79 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_windows',
     isConcurrencySafe: () => true,
-    description: '列出当前所有屏幕外窗口（就是安静启动的那些），以及显示器布局、DPI 和前台窗口。用来找回之前启动的 hwnd，或确认没有窗口漏在你屏幕上。',
+    description: '列出当前所有可见顶层窗口（包括用户自己开在屏幕上的、以及安静启动的那些），外加显示器布局、DPI 和前台窗口。用它拿 hwnd：屏幕外窗口可以直接 quiet_shot / quiet_tree / quiet_act；屏幕上已经开着的窗口先 quiet_park 挪到屏幕外再操作。任何窗口句柄都可以直接传给 quiet_shot，不要求是 quiet_launch 启动的。别用 FindWindow / GetWindowRect 手搓窗口枚举。',
     parameters: { type: 'object', properties: {} },
     output: { schema: OBJECT_SCHEMA, render: (_args, value) => {
       const rec = asRecord(value);
       if (rec.ok !== true) return text([failText(rec, '读取失败')]);
       const offscreen = Array.isArray(rec.offscreen) ? rec.offscreen : [];
+      const windows = Array.isArray(rec.windows) ? rec.windows : offscreen;
       const lines = ['显示器：' + JSON.stringify(rec.monitors) + '，系统 DPI：' + rec.dpi];
-      lines.push('屏幕外窗口：' + offscreen.length + ' 个');
+      const fg = asRecord(rec.foreground);
+      if (typeof fg.title === 'string' && fg.title !== '') {
+        lines.push('前台窗口：hwnd ' + fg.hwnd + ' · pid ' + fg.pid + ' · ' + fg.title);
+      }
+      lines.push('屏幕外窗口：' + offscreen.length + ' 个（共 ' + (rec.count ?? windows.length) + ' 个可见窗口）');
       for (const w of offscreen) lines.push(windowLine(w));
-      if (offscreen.length === 0) lines.push('- 没有。用 quiet_launch 启动一个。');
+      if (offscreen.length === 0) lines.push('- 没有。用 quiet_launch 启动一个，或 quiet_park 接管已有的。');
+
+      const onScreen = windows.filter((w) => asRecord(w).offscreen !== true);
+      if (onScreen.length > 0) {
+        const shown = onScreen.slice(0, 20);
+        lines.push('屏幕上还有 ' + onScreen.length + ' 个窗口（想操作就先 quiet_park）：');
+        for (const w of shown) lines.push(windowLine(w));
+        if (onScreen.length > shown.length) lines.push('- …还有 ' + (onScreen.length - shown.length) + ' 个未列出');
+      }
       return text(lines);
     } },
     timeoutMs: 30000,
     async execute(rawArgs, exec) {
       const value = await runHelper(ctx, cfg, ['list'], { cwd: sessionCwd(exec), signal: exec?.signal });
-      for (const w of Array.isArray(value.offscreen) ? value.offscreen : []) {
+      const seen = Array.isArray(value.windows) ? value.windows : (Array.isArray(value.offscreen) ? value.offscreen : []);
+      for (const w of seen) {
         if (Number.isInteger(w?.hwnd) && !knownWindows.has(w.hwnd) && Number.isInteger(w.pid)) {
           knownWindows.set(w.hwnd, { pid: w.pid, shared: false });
         }
+      }
+      return value;
+    },
+  });
+
+  tools.push({
+    name: 'quiet_park',
+    isConcurrencySafe: () => false,
+    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点）。用于「用户自己已经开着这个程序」的场景：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act，全程不打断用户的桌面。窗口最小化时会先就地恢复但保持不激活。别用 SetWindowPos / MoveWindow 手搓。',
+    parameters: {
+      type: 'object',
+      properties: {
+        hwnd: { type: 'number', description: '窗口句柄，从 quiet_windows 的列表里取。' },
+        expectPid: { type: 'number', description: '可选。期望的进程 id；句柄被复用时报错而不是动错窗口。' },
+      },
+      required: ['hwnd'],
+    },
+    output: { schema: OBJECT_SCHEMA, render: (_args, value) => {
+      const rec = asRecord(value);
+      if (rec.ok !== true) return text([failText(rec, '挪动失败')]);
+      const lines = ['窗口 hwnd ' + rec.hwnd + ' 已挪到屏幕外。'];
+      if (Array.isArray(rec.before) && Array.isArray(rec.after)) {
+        lines.push('位置：' + JSON.stringify(rec.before) + ' → ' + JSON.stringify(rec.after));
+      }
+      lines.push(rec.offscreen === true ? '已确认不在任何显示器上。' : '警告：窗口仍在显示器范围内。');
+      if (rec.focus_stolen === true) lines.push('提示：期间前台窗口变过，可能是系统行为。');
+      if (typeof rec.note === 'string') lines.push(rec.note);
+      return text(lines);
+    } },
+    timeoutMs: 30000,
+    async execute(rawArgs, exec) {
+      const args = asRecord(rawArgs);
+      const hwnd = requiredNumber(args, 'hwnd', '窗口句柄');
+      const known = knownWindows.get(hwnd);
+      const argv = ['park', '--hwnd', String(hwnd)];
+      const expectPid = Number.isInteger(args.expectPid) ? args.expectPid : known?.pid;
+      if (Number.isInteger(expectPid)) argv.push('--expect-pid', String(expectPid));
+      const value = await runHelper(ctx, cfg, argv, { cwd: sessionCwd(exec), signal: exec?.signal });
+      if (value.ok === true && Number.isInteger(value.hwnd) && Number.isInteger(known?.pid)) {
+        knownWindows.set(value.hwnd, { pid: known.pid, shared: true });
       }
       return value;
     },
