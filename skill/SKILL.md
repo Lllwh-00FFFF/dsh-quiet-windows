@@ -13,11 +13,22 @@ description: "Use for ANY task that involves a Windows GUI window — opening an
 
 ## 标准流程
 
+### A. 程序还没开
+
 1. `quiet_launch` —— 传 `exe`，需要的话传 `args`（网址、路径、启动参数）、`width`/`height`。返回 `hwnd`。
 2. `quiet_shot` —— 看一眼画面，确认已经加载好。
 3. `quiet_tree` —— 读控件树，记下目标控件的 `name` 或 `auto_id`，以及它支持的模式。
 4. `quiet_act` —— 按控件操作：输入框 `set`，按钮/链接 `invoke`，标签页和列表项 `select`，勾选框 `toggle`，树节点 `expand`。
 5. `quiet_close` —— 收尾，进程不退时加 `kill`。
+
+### B. 程序已经开着（用户自己开的、上一次会话留下的，或你自己用别的办法起的）
+
+1. `quiet_windows` —— 拿 `hwnd`。返回里的 `windows` 是**全部可见顶层窗口**（`offscreen` 只是子集），屏幕上开着的程序也在里面。
+2. `quiet_park` —— 把它挪到屏幕外：不激活、不改大小、不抢焦点。用户的桌面不会被打断。
+3. 之后同上：`quiet_shot` / `quiet_tree` / `quiet_act`。
+4. 这个程序是用户本来就要用的，**收尾时不要 `quiet_close`**，放着就行（窗口留在屏幕外，用户点任务栏图标就回来了）。
+
+> `hwnd` 不要求来自 `quiet_launch`：`quiet_shot` / `quiet_tree` / `quiet_act` 接受任何有效句柄。别因为"这个窗口不是我启动的"就放弃插件、回去手搓 PrintWindow / ImageGrab —— 那是 2026-11 那次 507 次调用零使用的直接原因。
 
 ## 四条硬规则（违反就会打扰用户）
 

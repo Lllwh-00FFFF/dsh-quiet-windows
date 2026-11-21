@@ -64,9 +64,9 @@ function realSpawn(spec) {
 
 // 用一个中性的临时目录，别把作者机器上的路径写进公开仓库。
 const EXEC = { agent: { session: { header: { cwd: process.cwd() } } } };
-const EXPECTED = ['quiet_act', 'quiet_close', 'quiet_launch', 'quiet_shot', 'quiet_tree', 'quiet_windows'];
+const EXPECTED = ['quiet_act', 'quiet_close', 'quiet_launch', 'quiet_park', 'quiet_shot', 'quiet_tree', 'quiet_windows'];
 
-test('注册六个工具', async () => {
+test('注册七个工具', async () => {
   const { tools, ctx } = harness(failingSpawn());
   const { apply } = await import(MODULE);
   apply(ctx, {});
@@ -97,6 +97,7 @@ test('必需参数被写进 required', async () => {
   assert.deepEqual(tools.get('quiet_launch').parameters.required, ['exe']);
   assert.deepEqual(tools.get('quiet_act').parameters.required, ['hwnd', 'op']);
   assert.deepEqual(tools.get('quiet_shot').parameters.required, ['hwnd']);
+  assert.deepEqual(tools.get('quiet_park').parameters.required, ['hwnd']);
   assert.equal(tools.get('quiet_windows').parameters.required, undefined);
 });
 
@@ -141,6 +142,31 @@ test('真实环境下能找到 Python 并列出屏幕外窗口', async () => {
   assert.equal(value.ok, true);
   assert.ok(Array.isArray(value.monitors) && value.monitors.length >= 1);
   assert.ok(Array.isArray(value.offscreen));
+  // 新增：所有可见顶层窗口都要列出来，用户自己开的程序才能被 park / shot 接管。
+  assert.ok(Array.isArray(value.windows), 'windows 字段必须存在');
+  assert.ok(value.windows.length >= value.offscreen.length, 'windows 是 offscreen 的超集');
+});
+
+test('quiet_windows 的渲染里能看到屏幕上的窗口', async () => {
+  const { tools, ctx } = harness(failingSpawn());
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  const render = tools.get('quiet_windows').output.render;
+  const blocks = render({}, {
+    ok: true,
+    monitors: [[0, 0, 1920, 1080]],
+    dpi: 96,
+    count: 2,
+    foreground: { hwnd: 2, pid: 22, title: '前台示例' },
+    offscreen: [{ hwnd: 1, pid: 11, title: '离屏示例', rect: [0, 0, 100, 80], offscreen: true }],
+    windows: [
+      { hwnd: 1, pid: 11, title: '离屏示例', rect: [0, 0, 100, 80], offscreen: true },
+      { hwnd: 3, pid: 33, title: '屏幕上的示例', rect: [10, 10, 300, 200], offscreen: false },
+    ],
+  });
+  const body = blocks.map((b) => b.text ?? '').join('\n');
+  assert.match(body, /屏幕上的示例/, '屏幕上的窗口也要渲染出来');
+  assert.match(body, /quiet_park/, '要提示怎么接管屏幕上的窗口');
 });
 
 test('launch → close 全链路可用（离屏，全程不碰桌面）', async () => {
@@ -156,4 +182,20 @@ test('launch → close 全链路可用（离屏，全程不碰桌面）', async 
   assert.ok(Number.isInteger(value.pid));
   const closed = await tools.get('quiet_close').execute({ hwnd: value.hwnd }, EXEC);
   assert.equal(closed.closed, true);
+});
+
+test('quiet_park 能把一个已有窗口留在屏幕外（不抢焦点）', async () => {
+  const { tools, ctx } = harness(realSpawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, { launchTimeoutMs: 60000 });
+  const launched = await tools.get('quiet_launch').execute({ exe: 'charmap.exe', width: 700, height: 600 }, EXEC);
+  assert.equal(launched.ok, true);
+  try {
+    const parked = await tools.get('quiet_park').execute({ hwnd: launched.hwnd }, EXEC);
+    assert.equal(parked.ok, true, JSON.stringify(parked));
+    assert.equal(parked.offscreen, true, 'park 之后必须在所有显示器之外');
+    assert.ok(Array.isArray(parked.after) && parked.after.length === 4);
+  } finally {
+    await tools.get('quiet_close').execute({ hwnd: launched.hwnd, kill: true }, EXEC);
+  }
 });
