@@ -265,11 +265,12 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_launch',
     isConcurrencySafe: () => false,
-    description: '在屏幕外启动一个 GUI 程序：窗口从创建起就停在你所有显示器之外，全程不上屏，并尽量避免抢键盘焦点（被发现抢走会还回去），返回它的 hwnd。之后就配合 quiet_shot / quiet_tree / quiet_act 操作它。浏览器默认使用独立 profile，避免寄生到你已开的浏览器进程。要打开任何界面程序都用这个，不要用 Start-Process、cmd、手写 CreateProcess 或 ShowWindow。',
+    description: '在屏幕外启动一个 GUI 程序：窗口从创建起就停在你所有显示器之外，全程不上屏，并尽量避免抢键盘焦点（被发现抢走会还回去），返回它的 hwnd。之后就配合 quiet_shot / quiet_tree / quiet_act 操作它。浏览器默认使用独立 profile，避免寄生到你已开的浏览器进程。要打开任何界面程序都用这个，不要用 Start-Process、cmd、手写 CreateProcess 或 ShowWindow。**要预览网页（localhost、127.0.0.1、本地 HTML 文件、需要看渲染效果）也用它**：只传 url 就行，会自动挑浏览器离屏打开，用户不会被窗口挡住；别用会弹可见窗口的浏览器通道或浏览器自动化去截图。',
     parameters: {
       type: 'object',
       properties: {
-        exe: { type: 'string', description: '可执行文件的绝对路径，或 PATH 里的名字（如 charmap.exe、msedge.exe）。' },
+        exe: { type: 'string', description: '可执行文件的绝对路径，或 PATH 里的名字（如 charmap.exe、msedge.exe）。只想预览网页时可以不给，用 url。' },
+        url: { type: 'string', description: '要打开的网址或本地文件（如 http://127.0.0.1:4173/、file:///D:/x/demo.html）。给了 url 且没给 exe 时自动挑 Edge/Chrome，离屏打开。' },
         args: {
           type: 'array',
           items: { type: 'string' },
@@ -287,7 +288,7 @@ function buildTools(ctx, cfg) {
           description: '启动失败时保留已拉起的进程（默认 false：失败即结束它并清理临时 profile，避免留下看不见的窗口）。',
         },
       },
-      required: ['exe'],
+      required: [],
     },
     output: { schema: OBJECT_SCHEMA, render: (_args, value) => {
       const rec = asRecord(value);
@@ -317,8 +318,13 @@ function buildTools(ctx, cfg) {
     async execute(rawArgs, exec) {
       const args = asRecord(rawArgs);
       const exe = optionalString(args, 'exe');
-      if (exe === undefined) throw new Error('exe 为必填：给出可执行文件路径或名字。');
-      const argv = ['launch', '--exe', exe];
+      const url = optionalString(args, 'url');
+      if (exe === undefined && url === undefined) {
+        throw new Error('exe 和 url 至少要给一个：启动程序给 exe，预览网页给 url。');
+      }
+      const argv = ['launch'];
+      if (exe !== undefined) argv.push('--exe', exe);
+      if (url !== undefined) argv.push('--url', url);
       const extra = Array.isArray(args.args) ? args.args.filter((a) => typeof a === 'string' && a !== '') : [];
       // 逐个 --arg 会被 argparse 当成选项（Chromium 的开关都以 '-' 开头），走 JSON 数组。
       if (extra.length > 0) argv.push('--argv-json', JSON.stringify(extra));
