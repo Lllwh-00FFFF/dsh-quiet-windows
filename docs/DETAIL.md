@@ -33,6 +33,13 @@
 3. 之后同上：`quiet_shot` / `quiet_tree` / `quiet_act`。
 4. 如果这个程序本来就是用户开着的、还要继续用，**别 `quiet_close`**：操作完保持原样即可（窗口留在屏幕外，用户下次从任务栏点它就回来了）。
 
+### C. 预览本地网页
+
+1. `quiet_launch` 只传 `url`（如 `http://127.0.0.1:4173/`、`file:///D:/x/demo.html`），自动挑 Edge/Chrome 离屏打开。
+2. `quiet_shot` 截图看渲染效果。
+
+这个场景**不要**用会弹可见窗口的浏览器通道（wincu 的 browser lane、headed puppeteer）。但反过来，需要**登录态、真实站点交互、抓 DOM** 时要用 ego-browser 这类专用浏览器工具——本插件的浏览器是独立 profile，没有登录态也没有 DOM API。
+
 ## 运行前提
 
 - Windows 10 / 11。
