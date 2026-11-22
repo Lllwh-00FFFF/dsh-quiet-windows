@@ -39,17 +39,124 @@ PROFILE_ROOT = os.path.join(tempfile.gettempdir(), "dsh-quiet-profiles")
 PROFILE_MAX_AGE_HOURS = 6.0
 
 
+JOURNAL_ROOT = os.path.join(tempfile.gettempdir(), "dsh-quiet-launch")
+
+
+def pid_alive(pid: int) -> bool:
+    """进程还活着吗。taskkill 可能成功退出但进程没死，必须实测。"""
+    if not pid:
+        return False
+    try:
+        import win32api
+
+        handle = win32api.OpenProcess(win32con.PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    except Exception:
+        return False
+    try:
+        return win32process.GetExitCodeProcess(handle) == win32con.STILL_ACTIVE
+    except Exception:
+        return False
+    finally:
+        try:
+            handle.Close()
+        except Exception:
+            pass
+
+
+def journal_file(token: str) -> str:
+    return os.path.join(JOURNAL_ROOT, f"{token}.json")
+
+
+def read_journal(path: str | None) -> dict | None:
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def read_journals() -> list[dict]:
+    out: list[dict] = []
+    try:
+        for entry in os.scandir(JOURNAL_ROOT):
+            if not entry.is_file() or not entry.name.endswith(".json"):
+                continue
+            try:
+                with open(entry.path, encoding="utf-8") as fh:
+                    data = json.load(fh)
+                data["_path"] = entry.path
+                out.append(data)
+            except Exception:
+                continue
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    return out
+
+
+def write_journal(path: str, data: dict) -> None:
+    """先落盘再启动之外的事：宿主掐掉本进程时，这份记录是唯一的线索。"""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def drop_journal(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except Exception:
+        pass
+
+
+def kill_tree(pid: int) -> bool:
+    """结束进程树并实测它是否真的没了。"""
+    if not pid:
+        return False
+    try:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True)
+    except Exception:
+        return False
+    for _ in range(20):
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.15)
+    return not pid_alive(pid)
+
+
 def sweep_profiles(max_age_hours: float = PROFILE_MAX_AGE_HOURS) -> int:
+    """清理过期的临时浏览器 profile；正在被活进程使用的一律跳过。"""
     removed = 0
+    journals = read_journals()
+    live = {j.get("profile") for j in journals if pid_alive(j.get("proc_pid") or 0)}
+    # 进程已经没了的启动记录顺手删掉，别让 %TEMP% 里堆一堆孤儿 JSON。
+    for journal in journals:
+        if not pid_alive(journal.get("proc_pid") or 0):
+            try:
+                os.unlink(journal["_path"])
+            except Exception:
+                pass
     try:
         if not os.path.isdir(PROFILE_ROOT):
             return 0
         cutoff = time.time() - max_age_hours * 3600
         for entry in os.scandir(PROFILE_ROOT):
             try:
-                if entry.is_dir() and entry.stat().st_mtime < cutoff:
-                    shutil.rmtree(entry.path, ignore_errors=True)
-                    removed += 1
+                if not entry.is_dir() or entry.stat().st_mtime >= cutoff:
+                    continue
+                if entry.path in live:
+                    continue
+                shutil.rmtree(entry.path, ignore_errors=True)
+                removed += 1
             except Exception:
                 continue
     except Exception:
@@ -497,7 +604,7 @@ def resolve_browser() -> str:
 def launch(exe: str | None, args: list[str], width: int, height: int, timeout: float,
            title_re: str | None, keep_hidden: bool, allow_activate: bool = False,
            isolate: bool = True, keep_on_failure: bool = False,
-           url: str | None = None) -> dict:
+           url: str | None = None, journal: str | None = None) -> dict:
     if not exe:
         if not url:
             return {"ok": False, "error": "exe 和 url 至少要给一个"}
@@ -536,19 +643,22 @@ def launch(exe: str | None, args: list[str], width: int, height: int, timeout: f
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = win32con.SW_HIDE
     proc = subprocess.Popen(cmd, startupinfo=si, close_fds=True)
+    # 宿主可能在等待窗口的过程中掐掉本进程（超时/用户取消），那样下面的代码一行都不会跑。
+    # 先把 pid 和 profile 写到磁盘，宿主之后可以照着这份记录收拾干净。
+    if journal:
+        write_journal(journal, {
+            "proc_pid": proc.pid, "exe": exe, "argv": cmd,
+            "profile": isolated_profile, "started": time.time(),
+        })
 
     def cleanup(reason: str) -> dict:
         """启动失败时收拾现场：不留下看不见的进程和临时 profile。"""
         killed = False
         if not keep_on_failure:
-            try:
-                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                               capture_output=True)
-                killed = True
-            except Exception:
-                killed = False
+            killed = kill_tree(proc.pid)
         if isolated_profile:
             shutil.rmtree(isolated_profile, ignore_errors=True)
+        drop_journal(journal)
         return {"ok": False, "error": reason, "proc_pid": proc.pid,
                 "cleaned": killed, "isolated_profile": isolated_profile,
                 "launched": cmd}
@@ -602,13 +712,18 @@ def launch(exe: str | None, args: list[str], width: int, height: int, timeout: f
     info = describe(hwnd)
     window_pid = info.get("pid")
     mismatch = window_pid != proc.pid
+    # Chromium 会把窗口放在新派生的子进程里，pid 和启动器不同是正常的。
+    # 只有「我们没能给它独立 profile」时，才真的可能寄生进用户已开的浏览器，那才叫共享。
+    shared = bool(mismatch) and isolated_profile is None
     # 永不激活：否则 UIA 的 SetFocus / 控件刷新会把离屏窗口顶上前台，抢走键盘焦点。
     info["no_activate"] = False if allow_activate else no_activate(hwnd)
-    # 焦点护栏：首次 ShowWindow 仍可能把新窗口顶上前台；发现就还回去。
+    # 焦点护栏：只把「我们顶上去的那个窗口」换回来；如果前台变成了别的窗口，
+    # 那是用户自己切的，再抢就是新的打扰。
     focus_stolen = False
     try:
-        focus_stolen = bool(fg0) and win32gui.GetForegroundWindow() != fg0
-        if focus_stolen and win32gui.IsWindow(fg0):
+        current_fg = win32gui.GetForegroundWindow()
+        focus_stolen = bool(fg0) and current_fg != fg0
+        if focus_stolen and current_fg == hwnd and win32gui.IsWindow(fg0):
             force_foreground(fg0)
     except Exception:
         pass
@@ -619,13 +734,22 @@ def launch(exe: str | None, args: list[str], width: int, height: int, timeout: f
         "window_pid": window_pid,
         "proc_pid": proc.pid,
         "process_mismatch": mismatch,
-        "shared_process": mismatch,
+        "shared_process": shared,
+        # 只有我们自己拉起、且没被判成共享的窗口，才允许 quiet_close 强杀。
+        "owned": not shared,
         "isolated_profile": isolated_profile,
         "flashed": flashed,
         "focus_stolen": focus_stolen,
         "park_origin": [ox, oy],
         "launched": cmd,
+        "journal": journal,
     })
+    if journal:
+        write_journal(journal, {
+            "proc_pid": proc.pid, "exe": exe, "argv": cmd,
+            "profile": isolated_profile, "started": time.time(),
+            "hwnd": hwnd, "window_pid": window_pid,
+        })
     return info
 
 
@@ -658,6 +782,8 @@ def main() -> int:
                    help="浏览器不启用独立 profile（默认启用；关掉后可能寄生到已运行的浏览器里）")
     p.add_argument("--keep-on-failure", action="store_true",
                    help="启动失败时不结束已拉起的进程，留给你自己排查")
+    p.add_argument("--journal", default=None,
+                   help="启动记录文件：宿主在超时/取消后照着它清理残留")
 
     sub.add_parser("list")
 
@@ -692,6 +818,17 @@ def main() -> int:
     p.add_argument("--hwnd", type=int, required=True)
     p.add_argument("--kill", action="store_true")
     p.add_argument("--expect-pid", type=int, default=None)
+    p.add_argument("--profile", default=None,
+                   help="这个窗口用的临时 profile 目录，进程结束后一并删除")
+    p.add_argument("--journal", default=None, help="启动记录文件，清理后删除")
+
+    p = sub.add_parser("unpark")
+    p.add_argument("--hwnd", type=int, required=True)
+    p.add_argument("--rect", default=None, help="原始矩形 l,t,r,b")
+    p.add_argument("--expect-pid", type=int, default=None)
+
+    p = sub.add_parser("reap")
+    p.add_argument("--journal", required=True)
 
     sub.add_parser("state")
 
@@ -710,7 +847,7 @@ def main() -> int:
                 return 2
         res = launch(a.exe, extra, a.width, a.height, a.timeout, a.title,
                      a.keep_hidden, a.allow_activate, not a.no_isolate, a.keep_on_failure,
-                     url=a.url)
+                     url=a.url, journal=a.journal)
     elif a.cmd == "list":
         wins = [describe(h) for h in top_windows()
                 if win32gui.GetWindowText(h) and win32gui.IsWindowVisible(h)]
@@ -752,20 +889,67 @@ def main() -> int:
                 win32gui.PostMessage(a.hwnd, win32con.WM_CLOSE, 0, 0)
                 time.sleep(1.0)
                 alive = win32gui.IsWindow(a.hwnd)
+                pid = info.get("pid")
                 killed = False
+                kill_verified = None
                 # 只按「窗口所属进程」杀，而且必须是我们确认过的那一个；
                 # 共享进程（寄生到用户已开的浏览器）默认不动进程，只关窗口。
-                if alive and a.kill and info.get("pid"):
-                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(info["pid"])],
+                if alive and a.kill and pid:
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)],
                                    capture_output=True)
-                    killed = True
-                    time.sleep(0.5)
+                    # taskkill 报成功不等于进程没了，要实测。
+                    for _ in range(20):
+                        if not pid_alive(pid):
+                            break
+                        time.sleep(0.15)
+                    killed = not pid_alive(pid)
+                    kill_verified = killed
+                    time.sleep(0.3)
                     alive = win32gui.IsWindow(a.hwnd)
+                # 我们自己开的浏览器：进程走了就把临时 profile 删掉，别让缓存一直堆着。
+                profile_removed = False
+                if a.profile and pid and not pid_alive(pid):
+                    shutil.rmtree(a.profile, ignore_errors=True)
+                    profile_removed = not os.path.isdir(a.profile)
+                    drop_journal(a.journal)
                 res = {"ok": True, "closed": not alive, "killed": killed,
+                       "kill_verified": kill_verified,
+                       "profile_removed": profile_removed,
                        "window": info,
-                       "hint": None if not alive else "窗口仍在；可加 kill=true，或手动处理该进程"}
+                       "hint": None if not alive else "窗口仍在；可加 kill=true（仅限本插件启动的进程），或手动处理该进程"}
             except Exception as exc:
                 res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    elif a.cmd == "unpark":
+        res = verify_pid(a.hwnd, a.expect_pid)
+        if res is None:
+            if not a.rect:
+                res = {"ok": False, "error": "缺少 --rect（原始矩形），无法恢复位置"}
+            else:
+                try:
+                    left, top, right, bottom = [int(x) for x in a.rect.split(",")]
+                    win32gui.SetWindowPos(
+                        a.hwnd, 0, left, top, max(right - left, 1), max(bottom - top, 1),
+                        win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
+                    time.sleep(0.2)
+                    res = {"ok": True, "hwnd": a.hwnd, "restored": describe(a.hwnd),
+                           "offscreen": describe(a.hwnd).get("offscreen")}
+                except Exception as exc:
+                    res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    elif a.cmd == "reap":
+        # 宿主在超时/取消后调用：照着启动日志把进程和 profile 清掉。
+        journal = read_journal(a.journal)
+        if journal is None:
+            res = {"ok": True, "reaped": False, "reason": "没有启动记录（可能已经正常结束）"}
+        else:
+            pid = journal.get("proc_pid") or 0
+            killed = kill_tree(pid)
+            profile = journal.get("profile")
+            if profile:
+                shutil.rmtree(profile, ignore_errors=True)
+            drop_journal(a.journal)
+            res = {"ok": True, "reaped": True, "proc_pid": pid,
+                   "killed": killed, "alive": pid_alive(pid),
+                   "profile_removed": bool(profile) and not os.path.isdir(profile or "")}
     else:  # state
         res = {
             "ok": True,

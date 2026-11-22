@@ -12,6 +12,8 @@
  */
 import { fileURLToPath } from 'node:url';
 import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { join, resolve as resolvePath } from 'node:path';
 
 export const name = 'quiet-windows';
@@ -164,6 +166,26 @@ async function resolvePython(ctx, cfg, cwd) {
 
 /** hwnd → 我们启动时记录的进程信息，用来防句柄复用和误杀。 */
 const knownWindows = new Map();
+
+/**
+ * 每次 launch 一份启动记录。宿主超时/取消时 Python 会被直接掐掉，
+ * 它自己的清理逻辑跑不到，只能靠这份落盘记录在宿主侧补刀。
+ */
+function journalPath() {
+  return join(tmpdir(), 'dsh-quiet-launch', randomUUID() + '.json');
+}
+
+/** 照着启动记录收拾残留：结束进程树、删临时 profile。失败也不抛，不能盖住原始错误。 */
+async function reapQuiet(ctx, cfg, journal, options) {
+  try {
+    await runHelper(ctx, cfg, ['reap', '--journal', journal], {
+      cwd: options?.cwd,
+      timeoutMs: 20000,
+    });
+  } catch {
+    // 清理是尽力而为：这里再抛错只会让真正的原因看不到。
+  }
+}
 
 /**
  * 跑一次 helper，返回解析后的 JSON。
@@ -338,14 +360,31 @@ function buildTools(ctx, cfg) {
       argv.push('--timeout', String(Math.max(5, Math.floor(cfg.launchTimeoutMs / 1000) - 8)));
       if (args.isolateProfile === false) argv.push('--no-isolate');
       if (args.keepOnFailure === true) argv.push('--keep-on-failure');
-      const value = await runHelper(ctx, cfg, argv, {
-        cwd: sessionCwd(exec), signal: exec?.signal, timeoutMs: cfg.launchTimeoutMs,
-      });
+      const journal = journalPath();
+      argv.push('--journal', journal);
+      const cwd = sessionCwd(exec);
+      let value;
+      try {
+        value = await runHelper(ctx, cfg, argv, {
+          cwd, signal: exec?.signal, timeoutMs: cfg.launchTimeoutMs,
+        });
+      } catch (error) {
+        // 超时或被取消：Python 已经连同它的清理逻辑一起被掐掉了，这里补一刀。
+        await reapQuiet(ctx, cfg, journal, { cwd });
+        throw error;
+      }
       if (value.ok === true && Number.isInteger(value.hwnd)) {
         knownWindows.set(value.hwnd, {
           pid: value.pid,
+          // 只有没被判成共享（即我们自己给了独立 profile）的窗口才允许强杀。
+          owned: value.owned === true && value.shared_process !== true,
           shared: value.shared_process === true,
+          profile: typeof value.isolated_profile === 'string' ? value.isolated_profile : undefined,
+          journal,
         });
+      } else {
+        // helper 自己失败时一般已经清理过；这里兜底，防止它崩在清理之前。
+        await reapQuiet(ctx, cfg, journal, { cwd });
       }
       return value;
     },
@@ -385,7 +424,9 @@ function buildTools(ctx, cfg) {
       const seen = Array.isArray(value.windows) ? value.windows : (Array.isArray(value.offscreen) ? value.offscreen : []);
       for (const w of seen) {
         if (Number.isInteger(w?.hwnd) && !knownWindows.has(w.hwnd) && Number.isInteger(w.pid)) {
-          knownWindows.set(w.hwnd, { pid: w.pid, shared: false });
+          // 这里列出来的窗口不是我们启动的：记 pid 用于句柄复用校验，
+          // 但 owned 必须是 false —— 用户自己的浏览器/编辑器绝不能被强杀。
+          knownWindows.set(w.hwnd, { pid: w.pid, owned: false, shared: true });
         }
       }
       return value;
@@ -395,18 +436,25 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_park',
     isConcurrencySafe: () => false,
-    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点）。用于「用户自己已经开着这个程序」的场景：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act，全程不打断用户的桌面。窗口最小化时会先就地恢复但保持不激活。别用 SetWindowPos / MoveWindow 手搓。',
+    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点）。用于「用户自己已经开着这个程序」的场景：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act，全程不打断用户的桌面。窗口最小化时会先就地恢复但保持不激活。想把它放回原位就再调一次并传 restore: true。别用 SetWindowPos / MoveWindow 手搓。',
     parameters: {
       type: 'object',
       properties: {
         hwnd: { type: 'number', description: '窗口句柄，从 quiet_windows 的列表里取。' },
-        expectPid: { type: 'number', description: '可选。期望的进程 id；句柄被复用时报错而不是动错窗口。' },
+        expectPid: { type: 'number', description: '期望的进程 id。窗口不是本插件启动的（quiet_windows 列出来的）必须给，否则拒绝执行。' },
+        restore: { type: 'boolean', description: 'true 表示放回 park 之前的位置，而不是继续往屏幕外挪。' },
       },
       required: ['hwnd'],
     },
     output: { schema: OBJECT_SCHEMA, render: (_args, value) => {
       const rec = asRecord(value);
       if (rec.ok !== true) return text([failText(rec, '挪动失败')]);
+      if (rec.restored !== undefined) {
+        const info = asRecord(rec.restored);
+        const rect = Array.isArray(info.rect) ? info.rect : [];
+        return text(['窗口 hwnd ' + rec.hwnd + ' 已放回原位：' + JSON.stringify(rect)
+          + (info.offscreen === true ? '（警告：仍在屏幕外）' : '（已回到屏幕内）')]);
+      }
       const lines = ['窗口 hwnd ' + rec.hwnd + ' 已挪到屏幕外。'];
       if (Array.isArray(rec.before) && Array.isArray(rec.after)) {
         lines.push('位置：' + JSON.stringify(rec.before) + ' → ' + JSON.stringify(rec.after));
@@ -421,12 +469,34 @@ function buildTools(ctx, cfg) {
       const args = asRecord(rawArgs);
       const hwnd = requiredNumber(args, 'hwnd', '窗口句柄');
       const known = knownWindows.get(hwnd);
-      const argv = ['park', '--hwnd', String(hwnd)];
       const expectPid = Number.isInteger(args.expectPid) ? args.expectPid : known?.pid;
-      if (Number.isInteger(expectPid)) argv.push('--expect-pid', String(expectPid));
-      const value = await runHelper(ctx, cfg, argv, { cwd: sessionCwd(exec), signal: exec?.signal });
-      if (value.ok === true && Number.isInteger(value.hwnd) && Number.isInteger(known?.pid)) {
-        knownWindows.set(value.hwnd, { pid: known.pid, shared: true });
+      // 不知道这个窗口属于谁就不动它：句柄会被系统复用，动错窗口比不操作更糟。
+      if (!Number.isInteger(expectPid)) {
+        throw new Error('这个 hwnd 没有记录进程 id。请先 quiet_windows 拿到带 pid 的句柄，或显式传 expectPid。');
+      }
+      if (args.restore === true) {
+        const origin = known?.origin;
+        if (!Array.isArray(origin)) {
+          throw new Error('没有记录这个窗口的原始位置，无法恢复（可能不是本会话 park 的）。');
+        }
+        const value = await runHelper(ctx, cfg, ['unpark', '--hwnd', String(hwnd),
+          '--rect', origin.join(','), '--expect-pid', String(expectPid)], {
+          cwd: sessionCwd(exec), signal: exec?.signal,
+        });
+        if (value.ok === true && known) knownWindows.set(hwnd, { ...known, origin: undefined });
+        return value;
+      }
+      const value = await runHelper(ctx, cfg, ['park', '--hwnd', String(hwnd),
+        '--expect-pid', String(expectPid)], { cwd: sessionCwd(exec), signal: exec?.signal });
+      if (value.ok === true && Number.isInteger(value.hwnd)) {
+        knownWindows.set(value.hwnd, {
+          pid: expectPid,
+          owned: known?.owned === true,
+          shared: known?.shared === true,
+          profile: known?.profile,
+          journal: known?.journal,
+          origin: Array.isArray(value.before) ? value.before : undefined,
+        });
       }
       return value;
     },
@@ -571,21 +641,23 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_close',
     isConcurrencySafe: () => false,
-    description: '关闭一个屏幕外窗口（先正常关闭，进程不退就强制结束）。收尾用，避免留下看不见的进程。',
+    description: '关闭一个屏幕外窗口（先正常关闭；只有本插件自己启动的进程才会在 kill=true 时强制结束）。收尾用，避免留下看不见的进程。用户自己开着的窗口只会收到正常关闭请求。',
     parameters: {
       type: 'object',
       properties: {
         hwnd: { type: 'number', description: '窗口句柄。' },
-        kill: { type: 'boolean', description: '关闭失败时强制结束进程（默认 false）。' },
+        kill: { type: 'boolean', description: '关闭失败时强制结束进程（默认 false）。只对 quiet_launch 启动的进程生效；不是本插件启动的窗口会被拒绝。' },
       },
       required: ['hwnd'],
     },
     output: { schema: OBJECT_SCHEMA, render: (_args, value) => {
       const rec = asRecord(value);
       if (rec.ok !== true) return text([failText(rec, '关闭失败')]);
-      const lines = [rec.closed === true ? '窗口已关闭。' : '已发出关闭请求，窗口仍在。可加 kill=true 强制结束。'];
+      const lines = [rec.closed === true ? '窗口已关闭。' : '已发出关闭请求，窗口仍在。'];
       if (rec.killed === true) lines.push('进程已强制结束。');
+      if (rec.profile_removed === true) lines.push('临时浏览器 profile 已清理。');
       if (typeof rec.kill_skipped === 'string') lines.push(rec.kill_skipped);
+      if (rec.closed !== true) lines.push('窗口仍在；kill=true 只对本插件启动的进程生效，其他窗口需要你手动处理。');
       return text(lines);
     } },
     timeoutMs: 30000,
@@ -594,14 +666,23 @@ function buildTools(ctx, cfg) {
       const hwnd = requiredNumber(args, 'hwnd', '窗口句柄');
       const known = knownWindows.get(hwnd);
       const argv = ['close', '--hwnd', String(hwnd)];
-      // 共享进程（寄生到用户已开的浏览器里）绝不强制结束，只关这个窗口。
-      const wantKill = args.kill === true && known?.shared !== true;
+      // 强杀只对本插件自己拉起、且没被判成共享的进程开放。
+      // 用户自己开着的窗口（quiet_windows 列出来的）永远只发正常关闭请求，绝不结束进程——
+      // 那可能是他的浏览器或编辑器，里面还有没保存的东西。
+      const wantKill = args.kill === true && known?.owned === true;
       if (wantKill) argv.push('--kill');
       if (Number.isInteger(known?.pid)) argv.push('--expect-pid', String(known.pid));
+      if (typeof known?.profile === 'string') argv.push('--profile', known.profile);
+      if (typeof known?.journal === 'string') argv.push('--journal', known.journal);
       const value = await runHelper(ctx, cfg, argv, { cwd: sessionCwd(exec), signal: exec?.signal });
       if (value.ok === true && value.closed === true) knownWindows.delete(hwnd);
       if (args.kill === true && !wantKill) {
-        value.kill_skipped = '这个窗口属于一个已有进程（共享），已跳过强制结束，只关闭了窗口本身。';
+        value.kill_skipped = known === undefined
+          ? '这个窗口不是本插件启动的（没有归属记录），已跳过强制结束，只关闭了窗口本身。'
+          : '这个窗口不是本插件启动的（或属于共享进程），已跳过强制结束，只关闭了窗口本身。';
+      }
+      if (value.kill_verified === false) {
+        value.kill_skipped = '进程结束后仍在运行，可能没有权限或进程自行重启；请手动检查。';
       }
       return value;
     },

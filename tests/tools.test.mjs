@@ -62,6 +62,26 @@ function realSpawn(spec) {
   };
 }
 
+/** 记录 argv、按预设返回 JSON 的 spawn：用来验证安全策略，不真的开窗口。 */
+function scriptedSpawn(respond) {
+  const seen = [];
+  return (spec) => {
+    seen.push(spec.argv);
+    const text = JSON.stringify(respond(spec.argv));
+    return {
+      done: Promise.resolve({ exitCode: 0, signal: null }),
+      collected: {
+        stdout: { readFrom: () => ({ text, lossy: false, truncated: false }) },
+        stderr: { readFrom: () => ({ text: '', lossy: false, truncated: false }) },
+      },
+    };
+  };
+}
+
+function hasFlag(argv, flag) {
+  return argv.includes(flag);
+}
+
 // 用一个中性的临时目录，别把作者机器上的路径写进公开仓库。
 const EXEC = { agent: { session: { header: { cwd: process.cwd() } } } };
 const EXPECTED = ['quiet_act', 'quiet_close', 'quiet_launch', 'quiet_park', 'quiet_shot', 'quiet_tree', 'quiet_windows'];
@@ -236,4 +256,94 @@ test('预览网页：只给 url 就能离屏打开并截图', async () => {
   } finally {
     await tools.get('quiet_close').execute({ hwnd: launched.hwnd, kill: true }, EXEC);
   }
+});
+
+test('用户自己的窗口：kill=true 也不会去结束进程', async () => {
+  const seen = [];
+  const spawn = scriptedSpawn((argv) => {
+    seen.push(argv);
+    if (argv.includes('list')) {
+      return {
+        ok: true, monitors: [[0, 0, 1920, 1080]], dpi: 96, count: 1,
+        foreground: { hwnd: 2, pid: 22, title: 'x' },
+        windows: [{ hwnd: 1234, pid: 4321, title: '用户自己的记事本', rect: [0, 0, 10, 10], offscreen: false }],
+        offscreen: [],
+      };
+    }
+    return { ok: true, closed: false, window: { hwnd: 1234, pid: 4321 } };
+  });
+  const { tools, ctx } = harness(spawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+
+  await tools.get('quiet_windows').execute({}, EXEC);
+  const closed = await tools.get('quiet_close').execute({ hwnd: 1234, kill: true }, EXEC);
+
+  const closeArgv = seen.filter((argv) => argv.includes('close')).at(-1);
+  assert.ok(closeArgv, '应该调用了 close');
+  assert.equal(hasFlag(closeArgv, '--kill'), false, '用户窗口不允许 --kill');
+  assert.match(closeArgv.join(' '), /--expect-pid 4321/, '仍要带上 pid 做句柄复用校验');
+  assert.match(String(closed.kill_skipped), /不是本插件启动/, '要说明为什么没强杀');
+});
+
+test('本插件启动的窗口：kill=true 才会真的带 --kill', async () => {
+  const seen = [];
+  const spawn = scriptedSpawn((argv) => {
+    seen.push(argv);
+    if (argv.includes('launch')) {
+      return {
+        ok: true, hwnd: 777, pid: 888, proc_pid: 888, offscreen: true,
+        owned: true, shared_process: false, isolated_profile: null,
+      };
+    }
+    return { ok: true, closed: true, killed: true, kill_verified: true };
+  });
+  const { tools, ctx } = harness(spawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, { launchTimeoutMs: 60000 });
+
+  await tools.get('quiet_launch').execute({ exe: 'charmap.exe' }, EXEC);
+  await tools.get('quiet_close').execute({ hwnd: 777, kill: true }, EXEC);
+
+  const closeArgv = seen.filter((argv) => argv.includes('close')).at(-1);
+  assert.ok(closeArgv, '应该调用了 close');
+  assert.equal(hasFlag(closeArgv, '--kill'), true, '自己启动的进程允许强杀');
+});
+
+test('park 不认识的句柄会被拒绝（防句柄复用动错窗口）', async () => {
+  const spawn = scriptedSpawn(() => ({ ok: true }));
+  const { tools, ctx } = harness(spawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  await assert.rejects(
+    () => tools.get('quiet_park').execute({ hwnd: 55555 }, EXEC),
+    /没有记录进程 id/,
+  );
+});
+
+test('启动记录：launch 会带上 --journal，失败时补一次 reap', async () => {
+  const seen = [];
+  let failed = false;
+  const spawn = scriptedSpawn((argv) => {
+    seen.push(argv);
+    if (argv.includes('launch')) {
+      failed = true;
+      return { ok: false, error: '等待窗口超时' };
+    }
+    return { ok: true, reaped: true };
+  });
+  const { tools, ctx } = harness(spawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, { launchTimeoutMs: 60000 });
+
+  const result = await tools.get('quiet_launch').execute({ exe: 'charmap.exe' }, EXEC);
+  assert.equal(result.ok, false);
+
+  const launchArgv = seen.find((argv) => argv.includes('launch'));
+  assert.ok(launchArgv.includes('--journal'), 'launch 必须带 --journal');
+  const reapArgv = seen.find((argv) => argv.includes('reap'));
+  assert.ok(reapArgv, '启动失败后要补一刀 reap');
+  assert.equal(failed, true);
+  const journalArg = launchArgv[launchArgv.indexOf('--journal') + 1];
+  assert.equal(reapArgv[reapArgv.indexOf('--journal') + 1], journalArg, 'reap 要用同一份启动记录');
 });
