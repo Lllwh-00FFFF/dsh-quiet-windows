@@ -32,7 +32,7 @@ description: "Use for ANY task that involves a Windows GUI window — opening an
 
 ## 预览本地网页（localhost / file://）
 
-**别用会开可见窗口的浏览器通道**（wincu 的 browser lane、ego-browser、headed puppeteer）——它们会在用户屏幕上真的弹出一个窗口，等于把桌面占了。标准做法只有两步：
+**别用会开可见窗口的浏览器通道**（wincu 的 browser lane、headed puppeteer）——它们会在用户屏幕上真的弹出一个窗口，等于把桌面占了。标准做法只有两步：
 
 ```
 quiet_launch { url: "http://127.0.0.1:4173/", width: 1280, height: 860 }
@@ -42,6 +42,17 @@ quiet_shot   { hwnd }
 `quiet_launch` 只给 `url` 时会自动挑 Edge/Chrome，用独立 profile 离屏打开，并带上 `--disable-backgrounding-occluded-windows`、`--disable-renderer-backgrounding` 这类开关，所以离屏渲染不会变空白。
 
 刷新页面看改动：`quiet_tree` 找到地址栏（`auto_id` 常见是 `address-edit`）用 `quiet_act set` 写新 URL 回车；或者 `quiet_close` 掉重新 `quiet_launch`。
+
+### 什么时候不要用本技能，改用浏览器工具（ego-browser 等）
+
+| 要做的事 | 用什么 |
+|---|---|
+| 看我这页渲染对不对、截个图确认效果 | **本技能**：`quiet_launch { url }` + `quiet_shot` |
+| 在自己的项目里点按钮、走流程做端到端验证 | 本技能（`quiet_tree` + `quiet_act`） |
+| 需要**用户的登录态**、真实站点的数据 | **ego-browser 等专用浏览器工具**（本插件的浏览器是独立 profile，没有登录态） |
+| 抓 DOM / 执行页面 JS / 填复杂表单 | **专用浏览器工具**（本插件没有 DOM API） |
+
+一句话：**本技能负责"把窗口画出来、看得见但不上屏"；凡是需要登录态和数据抓取的，交给浏览器工具。**
 
 ## 四条硬规则（违反就会打扰用户）
 
