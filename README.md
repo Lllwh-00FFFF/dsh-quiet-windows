@@ -35,10 +35,19 @@ plugin_manager install_bundle  target: "<tgz 的绝对路径>"
 ## 测试
 
 ```powershell
-python -m unittest discover -s tests -p "test_*.py"   # 不碰桌面
-node --test tests/tools.test.mjs                       # 不碰桌面
-python tests/regress_browser.py --run                  # 会真的拉起浏览器
+python -m unittest discover -s tests -p "test_*.py"   # 纯逻辑，不开窗口
+node --test tests/tools.test.mjs                       # 会启动离屏窗口（看不见，但真的有进程）
+python tests/regress_browser.py --run                  # 会真的拉起浏览器，较慢
 ```
+
+`npm test` 等价于上面第二条；`npm run test:pure` 只跑不开窗口的那部分。
+
+## 安全边界
+
+- **强杀只对本插件启动的进程开放。** `quiet_close` 的 `kill=true` 遇到用户自己开着的窗口（`quiet_windows` 列出来的）会直接跳过，只发正常关闭请求——那可能是他的浏览器或编辑器，里面还有没保存的东西。
+- **取消/超时会补清理。** 宿主掐掉辅助进程时，启动记录（`%TEMP%\dsh-quiet-launch\*.json`）里有 pid 和 profile，宿主侧会照着它结束进程树、删临时目录。
+- **临时 profile 会回收。** 正常关闭后随进程一起删除；启动失败、进程已死的记录会在下次启动时清掉；6 小时内仍活着的实例不会被误删。
+- **`quiet_park` 需要 pid。** 句柄会被系统复用，没有进程 id 的句柄一律拒绝操作；`restore: true` 可以把它放回原位。
 
 ## 限制
 

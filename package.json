@@ -1,6 +1,6 @@
 {
   "name": "dsh-quiet-windows",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "private": false,
   "type": "module",
   "main": "./index.js",
@@ -49,5 +49,9 @@
   "homepage": "https://github.com/Lllwh-00FFFF/dsh-quiet-windows#readme",
   "bugs": {
     "url": "https://github.com/Lllwh-00FFFF/dsh-quiet-windows/issues"
+  },
+  "scripts": {
+    "test": "node --test tests/tools.test.mjs",
+    "test:pure": "python -m unittest discover -s tests -p \"test_*.py\""
   }
 }
