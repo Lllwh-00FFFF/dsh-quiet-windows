@@ -436,15 +436,16 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_park',
     isConcurrencySafe: () => false,
-    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点），用于接管用户已经开着的程序：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act。窗口最小化时会先就地恢复但保持不激活；传 restore: true 放回原位。\n**判据：凡是需要移动窗口位置，都用这个**——自己拼窗口位置 API 会丢掉“不激活”“不改大小”这些保护，很容易把窗口顶到前台、打断用户。',
+    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点），用于接管用户已经开着的程序：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act。窗口最小化时会先就地恢复但保持不激活；传 restore: true 放回原位。\n**判据：凡是需要移动窗口位置，都用这个**——自己拼窗口位置 API 会丢掉“不激活”“不改大小”这些保护，很容易把窗口顶到前台、打断用户。\n**别人替我启动的窗口也归这里**：用户的程序经常会派生自己的子进程（签到程序拉起官方客户端、安装器拉起设置窗口），那些窗口会直接出现在屏幕上；用 title 参数按标题接管它们。',
     parameters: {
       type: 'object',
       properties: {
         hwnd: { type: 'number', description: '窗口句柄，从 quiet_windows 的列表里取。' },
-        expectPid: { type: 'number', description: '期望的进程 id。窗口不是本插件启动的（quiet_windows 列出来的）必须给，否则拒绝执行。' },
+        title: { type: 'string', description: '按标题子串找窗口，用于接管“别人替我启动的窗口”（比如用户的程序派生出来的子进程）。必须唯一匹配，否则会返回候选列表让你改用 hwnd。' },
+        expectPid: { type: 'number', description: '期望的进程 id。用 hwnd 时，窗口不是本插件启动的（quiet_windows 列出来的）必须给，否则拒绝执行。' },
         restore: { type: 'boolean', description: 'true 表示放回 park 之前的位置，而不是继续往屏幕外挪。' },
       },
-      required: ['hwnd'],
+      required: [],
     },
     output: { schema: OBJECT_SCHEMA, render: (_args, value) => {
       const rec = asRecord(value);
@@ -467,7 +468,26 @@ function buildTools(ctx, cfg) {
     timeoutMs: 30000,
     async execute(rawArgs, exec) {
       const args = asRecord(rawArgs);
-      const hwnd = requiredNumber(args, 'hwnd', '窗口句柄');
+      const title = optionalString(args, 'title');
+      const hwnd = optionalNumber(args, 'hwnd');
+
+      // 按标题接管：用于"用户程序自己拉起来的窗口"（quiet_launch 管不到的子进程）。
+      if (hwnd === undefined) {
+        if (title === undefined) throw new Error('hwnd 和 title 至少要给一个。');
+        const value = await runHelper(ctx, cfg, ['park', '--title', title], {
+          cwd: sessionCwd(exec), signal: exec?.signal,
+        });
+        if (value.ok === true && Number.isInteger(value.hwnd)) {
+          knownWindows.set(value.hwnd, {
+            pid: Number.isInteger(value.pid) ? value.pid : undefined,
+            owned: false,
+            shared: true,
+            origin: Array.isArray(value.before) ? value.before : undefined,
+          });
+        }
+        return value;
+      }
+
       const known = knownWindows.get(hwnd);
       const expectPid = Number.isInteger(args.expectPid) ? args.expectPid : known?.pid;
       // 不知道这个窗口属于谁就不动它：句柄会被系统复用，动错窗口比不操作更糟。

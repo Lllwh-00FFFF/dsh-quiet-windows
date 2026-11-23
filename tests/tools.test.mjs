@@ -117,7 +117,7 @@ test('必需参数被写进 required', async () => {
   assert.deepEqual(tools.get('quiet_launch').parameters.required, []);
   assert.deepEqual(tools.get('quiet_act').parameters.required, ['hwnd', 'op']);
   assert.deepEqual(tools.get('quiet_shot').parameters.required, ['hwnd']);
-  assert.deepEqual(tools.get('quiet_park').parameters.required, ['hwnd']);
+  assert.deepEqual(tools.get('quiet_park').parameters.required, []);
   assert.equal(tools.get('quiet_windows').parameters.required, undefined);
 });
 
@@ -318,6 +318,33 @@ test('park 不认识的句柄会被拒绝（防句柄复用动错窗口）', asy
   await assert.rejects(
     () => tools.get('quiet_park').execute({ hwnd: 55555 }, EXEC),
     /没有记录进程 id/,
+  );
+});
+
+test('park 可以按标题接管“别人启动的窗口”', async () => {
+  const seen = [];
+  const spawn = scriptedSpawn((argv) => {
+    seen.push(argv);
+    return { ok: true, hwnd: 4242, pid: 999, title: 'Hyperdown', before: [1, 2, 3, 4], after: [-9, -9, -1, -1], offscreen: true };
+  });
+  const { tools, ctx } = harness(spawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  const value = await tools.get('quiet_park').execute({ title: 'Hyperdown' }, EXEC);
+  assert.equal(value.ok, true);
+  const parkArgv = seen.find((argv) => argv.includes('park'));
+  assert.ok(parkArgv.includes('--title'), '要用 --title 找窗口');
+  assert.equal(parkArgv[parkArgv.indexOf('--title') + 1], 'Hyperdown');
+});
+
+test('park 既不给 hwnd 也不给 title 时报错', async () => {
+  const spawn = scriptedSpawn(() => ({ ok: true }));
+  const { tools, ctx } = harness(spawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  await assert.rejects(
+    () => tools.get('quiet_park').execute({}, EXEC),
+    /hwnd 和 title 至少要给一个/,
   );
 });
 

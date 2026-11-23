@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 
 import ctypes
 import win32api
@@ -354,6 +355,23 @@ def verify_pid(hwnd: int, expect: int | None) -> dict | None:
     return None
 
 
+def find_windows_by_title(pattern: str) -> list[dict]:
+    """按标题子串找可见顶层窗口。用于接管"别人替我启动的窗口"（比如用户程序派生的子进程）。"""
+    needle = pattern.lower()
+    out: list[dict] = []
+    for hwnd in top_windows():
+        try:
+            title = win32gui.GetWindowText(hwnd)
+        except Exception:
+            continue
+        if not title or needle not in title.lower() or not win32gui.IsWindowVisible(hwnd):
+            continue
+        info = describe(hwnd)
+        if info.get("error") is None:
+            out.append(info)
+    return out
+
+
 def park_existing(hwnd: int, allow_activate: bool = False) -> dict:
     """把一个已经在运行的窗口挪到所有显示器之外，不激活、不改大小。
 
@@ -382,6 +400,8 @@ def park_existing(hwnd: int, allow_activate: bool = False) -> dict:
     return {
         "ok": True,
         "hwnd": hwnd,
+        "pid": after.get("pid"),
+        "title": after.get("title"),
         "before": before.get("rect"),
         "after": after.get("rect"),
         "offscreen": after.get("offscreen"),
@@ -684,7 +704,8 @@ def launch(exe: str | None, args: list[str], width: int, height: int, timeout: f
                 l2, t2, r2, b2 = win32gui.GetWindowRect(hwnd)
                 park(hwnd, *offscreen_origin(max(r2 - l2, 1), max(b2 - t2, 1)))
             break
-        time.sleep(0.15)
+        # 探测间隔小一点：程序自己把窗口显示出来到我们挪走之间的时间越短，用户看到的闪动越少。
+        time.sleep(0.05)
 
     if hwnd is None:
         return cleanup(f"等待窗口超时（{timeout:.0f} 秒）")
@@ -693,7 +714,14 @@ def launch(exe: str | None, args: list[str], width: int, height: int, timeout: f
     # 注意：必须按窗口"真实尺寸"重算屏幕外原点 —— 有些程序不理会请求的宽高
     # （charmap 固定 1051x875），只挪位置会有一角露在屏幕里。
     for _ in range(20):
-        l, t, r, b = win32gui.GetWindowRect(hwnd)
+        # 窗口可能在等待期间就没了（程序启动即崩、或把界面交给了另一个进程）。
+        # 这里必须自己判断，不能指望 GetWindowRect 抛异常再收拾——那会连带把整次调用变成 traceback。
+        if not win32gui.IsWindow(hwnd):
+            return cleanup("窗口在摆位置时消失了：程序可能自己退出，或者把界面交给了另一个进程")
+        try:
+            l, t, r, b = win32gui.GetWindowRect(hwnd)
+        except Exception:
+            return cleanup("窗口在摆位置时消失了（GetWindowRect 拿不到矩形）")
         w, h = max(r - l, 1), max(b - t, 1)
         ox, oy = offscreen_origin(w, h)
         if not is_offscreen(hwnd) or (r - l) != width or (b - t) != height:
@@ -788,7 +816,9 @@ def main() -> int:
     sub.add_parser("list")
 
     p = sub.add_parser("park")
-    p.add_argument("--hwnd", type=int, required=True)
+    p.add_argument("--hwnd", type=int, default=None)
+    p.add_argument("--title", default=None,
+                   help="按标题子串找窗口（用于接管用户程序派生出来的子窗口）")
     p.add_argument("--expect-pid", type=int, default=None)
     p.add_argument("--allow-activate", action="store_true")
 
@@ -860,7 +890,21 @@ def main() -> int:
                "offscreen": [w for w in wins if w.get("offscreen")],
                "count": len(wins)}
     elif a.cmd == "park":
-        res = verify_pid(a.hwnd, a.expect_pid) or park_existing(a.hwnd, a.allow_activate)
+        if a.title:
+            matches = find_windows_by_title(a.title)
+            if not matches:
+                res = {"ok": False, "error": f"没有标题包含「{a.title}」的可见窗口"}
+            elif len(matches) > 1:
+                res = {"ok": False,
+                       "error": f"标题包含「{a.title}」的窗口有 {len(matches)} 个，请改用 hwnd",
+                       "candidates": [{"hwnd": m.get("hwnd"), "pid": m.get("pid"),
+                                       "title": m.get("title")} for m in matches]}
+            else:
+                res = park_existing(matches[0]["hwnd"], a.allow_activate)
+        elif a.hwnd:
+            res = verify_pid(a.hwnd, a.expect_pid) or park_existing(a.hwnd, a.allow_activate)
+        else:
+            res = {"ok": False, "error": "需要 --hwnd 或 --title"}
     elif a.cmd == "shot":
         res = verify_pid(a.hwnd, a.expect_pid) or shot(a.hwnd, a.out)
     elif a.cmd == "tree":
@@ -970,4 +1014,16 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 任何没预料到的异常也要输出机器可读的 JSON：
+    # 否则宿主只能看到"没有输出（退出码 1）"加一坨 traceback，模型无从判断。
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 这里就是要兜住一切
+        print(json.dumps({
+            "ok": False,
+            "error": f"quietwin 内部异常：{type(exc).__name__}: {exc}",
+            "traceback": traceback.format_exc()[-1500:],
+        }, ensure_ascii=False, indent=2))
+        sys.exit(1)
