@@ -641,7 +641,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_close',
     isConcurrencySafe: () => false,
-    description: '关闭一个屏幕外窗口（先正常关闭；只有本插件自己启动的进程才会在 kill=true 时强制结束）。收尾用，避免留下看不见的进程。用户自己开着的窗口只会收到正常关闭请求。',
+    description: '关闭一个窗口：先发正常关闭请求，进程不退且确认是本插件启动的，才会在 kill=true 时强制结束。\n**判据：只有本插件自己启动的进程才允许被强制结束**——用户自己开着的窗口只收到关闭请求，绝不去杀进程，那可能是他正在用的浏览器或编辑器。也不要自己用系统命令结束进程。',
     parameters: {
       type: 'object',
       properties: {
