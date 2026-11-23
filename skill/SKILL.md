@@ -1,6 +1,6 @@
 ---
 name: quiet-windows
-description: "Use for ANY task that involves a Windows GUI window — opening an app, clicking a dialog, filling a form, reading a control tree, or just taking a screenshot of a window to check what it looks like — especially when the user's desktop must stay usable. Also use when you are about to hand-roll PowerShell P/Invoke, CopyFromScreen, ImageGrab, SetCursorPos, mouse_event, SendKeys or a pip-installed uiautomation script, because those are the exact things this skill replaces."
+description: "Use whenever a task touches a Windows GUI window — opening an app, clicking something, reading its controls, or just taking a screenshot to see how it looks — and in particular before you launch or drive a window yourself with commands, scripts, process APIs or screen-level automation. It exists so the user's screen, mouse and keyboard stay theirs; judge your own approach by whether a window would end up on their screen, not by whether the command is on a list."
 ---
 
 # 静默操作 Windows 界面
@@ -10,6 +10,18 @@ description: "Use for ANY task that involves a Windows GUI window — opening an
 ## 先问自己：真的需要界面吗
 
 能用命令行、API、配置文件、`--load-extension`、COM、Playwright 之类解决的，就不要开 GUI。GUI 是最后手段。
+
+## 判据（比清单重要）
+
+界面程序的种类和启动方式都数不完，别只对照"黑名单"——用下面这几条判断你**没见过**的做法：
+
+1. **启动**：凡是会让窗口出现在用户屏幕上的方式都不行。不管命令叫什么、是命令行还是脚本还是进程创建 API、是不是「我自己刚打包出来的 exe，跑一下看看」——只要窗口会上屏，就换成 `quiet_launch`。
+2. **截图**：凡是"从屏幕像素里抓图"的都不行——它们要求窗口真的显示在屏幕上，还会把挡在前面的窗口一起拍进去。
+3. **点击和输入**：凡是依赖鼠标位置、键盘焦点或窗口可见性的都不行——离屏窗口的坐标会被系统夹回屏幕，按键会打进用户当前窗口。
+4. **要窗口句柄**：先问 `quiet_windows`，不要自己枚举窗口。
+5. **结束进程**：只有本插件启动的进程才可能被强制结束；用户自己开着的窗口只发正常关闭请求，绝不去 kill。
+
+判断口径永远是「**会不会出现在用户的屏幕上、会不会打断他正在做的事**」，而不是「这条命令在不在某个清单里」。
 
 ## 标准流程
 

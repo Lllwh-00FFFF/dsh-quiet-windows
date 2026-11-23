@@ -287,7 +287,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_launch',
     isConcurrencySafe: () => false,
-    description: '在屏幕外启动一个 GUI 程序：窗口从创建起就停在你所有显示器之外，全程不上屏，并尽量避免抢键盘焦点（被发现抢走会还回去），返回它的 hwnd。之后就配合 quiet_shot / quiet_tree / quiet_act 操作它。浏览器默认使用独立 profile，避免寄生到你已开的浏览器进程。要打开任何界面程序都用这个，不要用 Start-Process、直接运行 exe（`& .\\x.exe`）、Invoke-CimMethod Win32_Process、cmd /c start、手写 CreateProcess 或 ShowWindow——这些都会把窗口放到用户屏幕上。**只是要看网页渲染效果时（localhost、127.0.0.1、本地 HTML 文件）也用它**：只传 url 就行，自动挑浏览器离屏打开。但需要登录态、在真实站点上点选填表、或抓 DOM 数据时，用专门的浏览器工具（如 ego-browser），不要用本工具——本工具只有一个看不见的浏览器窗口，没有你的登录态，也没有 DOM API。',
+    description: '在屏幕外启动并接管一个 GUI 窗口：从创建起就停在所有显示器之外，不上屏、不抢键盘焦点，返回 hwnd。之后用 quiet_shot / quiet_tree / quiet_act 操作它。\n**判据：凡是会让窗口出现在用户屏幕上的启动方式，都不能用**——不管你用哪个命令、哪个 API、哪种调用形式（命令行工具、脚本里的调用运算符、进程创建 API、shell 启子进程、双击式调用都算），也包括你自己刚打包出来、想“跑一下看看”的 exe。要在用户电脑上跑界面程序，一律从这里启动。\n只给 url 时自动挑浏览器离屏打开网页；但需要用户登录态、在真实站点上交互或抓 DOM 数据时，改用专门的浏览器工具（如 ego-browser）——本工具的浏览器是独立 profile，没有登录态，也没有 DOM API。',
     parameters: {
       type: 'object',
       properties: {
@@ -393,7 +393,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_windows',
     isConcurrencySafe: () => true,
-    description: '列出当前所有可见顶层窗口（包括用户自己开在屏幕上的、以及安静启动的那些），外加显示器布局、DPI 和前台窗口。用它拿 hwnd：屏幕外窗口可以直接 quiet_shot / quiet_tree / quiet_act；屏幕上已经开着的窗口先 quiet_park 挪到屏幕外再操作。任何窗口句柄都可以直接传给 quiet_shot，不要求是 quiet_launch 启动的。别用 FindWindow / GetWindowRect 手搓窗口枚举。',
+    description: '列表当前所有可见顶层窗口（含用户自己开在屏幕上的），附带显示器布局、DPI 和前台窗口；用它拿 hwnd。\n**判据：凡是需要窗口句柄，都以这里为准**——屏幕外窗口可以直接交给 quiet_shot / quiet_tree / quiet_act，屏幕上已经开着的先 quiet_park 挪走。这里给出的句柄都能用，不要求由 quiet_launch 启动。不要自己枚举窗口。',
     parameters: { type: 'object', properties: {} },
     output: { schema: OBJECT_SCHEMA, render: (_args, value) => {
       const rec = asRecord(value);
@@ -436,7 +436,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_park',
     isConcurrencySafe: () => false,
-    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点）。用于「用户自己已经开着这个程序」的场景：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act，全程不打断用户的桌面。窗口最小化时会先就地恢复但保持不激活。想把它放回原位就再调一次并传 restore: true。别用 SetWindowPos / MoveWindow 手搓。',
+    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点），用于接管用户已经开着的程序：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act。窗口最小化时会先就地恢复但保持不激活；传 restore: true 放回原位。\n**判据：凡是需要移动窗口位置，都用这个**——自己拼窗口位置 API 会丢掉“不激活”“不改大小”这些保护，很容易把窗口顶到前台、打断用户。',
     parameters: {
       type: 'object',
       properties: {
@@ -505,7 +505,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_shot',
     isConcurrencySafe: () => true,
-    description: '截取指定窗口当前的画面并存成 PNG，返回路径。截图来自窗口自己的渲染表面，因此即使窗口在屏幕外、被别的窗口完全盖住也能拿到；窗口被最小化时可能变黑（looks_blank 会标出来）。要截任何窗口都用这个，不要用 CopyFromScreen、ImageGrab、BitBlt 或 PrintWindow 手写脚本——它们要么要求窗口在屏上、要么会带上遮挡、要么 DPI 不对。',
+    description: '截取一个窗口自己的画面并存成 PNG，返回路径。画面来自窗口的渲染表面，所以窗口在屏幕外、被别的窗口完全盖住都能拿到；被最小化时可能变黑（looks_blank 会标出来）。\n**判据：凡是“从屏幕像素里抓图”的办法都不能用**——它们要求窗口真的显示在用户屏幕上，而且会把挡在前面的其它窗口一起拍进去。自己拼截图 API 也不必，这里已经处理了遮挡、离屏和 DPI。',
     parameters: {
       type: 'object',
       properties: { hwnd: { type: 'number', description: '窗口句柄，来自 quiet_launch 或 quiet_windows。' } },
@@ -546,7 +546,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_tree',
     isConcurrencySafe: () => true,
-    description: '读取窗口的 UI Automation 控件树：每个控件的类型、文字、class、AutomationId、可用模式（invoke / value / selectionitem / toggle / expandcollapse）。先看树，再用 quiet_act 按控件操作，不要猜坐标。读控件树本身也用它，不要自己 pip install uiautomation 再写脚本。',
+    description: '读取窗口的 UI Automation 控件树：每个控件的类型、文字、class、AutomationId、可用模式（invoke / value / selectionitem / toggle / expandcollapse）。\n**判据：想知道界面上有什么、能不能点，先用这个看**——不要靠截图猜文字，也不要另装 UI 自动化库自己写脚本。看到控件之后再用 quiet_act 按控件操作，不要猜坐标。',
     parameters: {
       type: 'object',
       properties: {
@@ -580,7 +580,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_act',
     isConcurrencySafe: () => false,
-    description: '对控件执行一次操作，走控件自身的 UI Automation 模式（invoke / set / select / toggle / expand / collapse），不需要窗口在前台、不用坐标点击，通常不会把窗口搬到屏幕内。按 name / auto_id / class / type 定位控件，至少给一个；动作期间若键盘焦点被抢会试图还回去——是“尽量不打扰”，不是零干扰保证。点按钮、填输入框都用这个，不要用 SetCursorPos + mouse_event 点坐标，也不要 SendKeys。',
+    description: '对控件执行一次操作，走控件自身的 UI Automation 模式（invoke / set / select / toggle / expand / collapse）：不需要窗口在前台，也不用坐标点击。按 name / exact_name / auto_id / class / type 定位，至少给一个。\n**判据：凡是依赖鼠标位置、键盘焦点或窗口可见性的操作都不能用**——离屏窗口的坐标会被系统夹回屏幕，按键会打进用户当前正在用的窗口。\n动作期间若键盘焦点被抢会尽量还回去：是“尽量不打扰”，不是零干扰保证。',
     parameters: {
       type: 'object',
       properties: {
