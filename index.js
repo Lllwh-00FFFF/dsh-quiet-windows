@@ -287,7 +287,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_launch',
     isConcurrencySafe: () => false,
-    description: '在屏幕外启动一个 GUI 程序：窗口从创建起就停在你所有显示器之外，全程不上屏，并尽量避免抢键盘焦点（被发现抢走会还回去），返回它的 hwnd。之后就配合 quiet_shot / quiet_tree / quiet_act 操作它。浏览器默认使用独立 profile，避免寄生到你已开的浏览器进程。要打开任何界面程序都用这个，不要用 Start-Process、cmd、手写 CreateProcess 或 ShowWindow。**只是要看网页渲染效果时（localhost、127.0.0.1、本地 HTML 文件）也用它**：只传 url 就行，自动挑浏览器离屏打开。但需要登录态、在真实站点上点选填表、或抓 DOM 数据时，用专门的浏览器工具（如 ego-browser），不要用本工具——本工具只有一个看不见的浏览器窗口，没有你的登录态，也没有 DOM API。',
+    description: '在屏幕外启动一个 GUI 程序：窗口从创建起就停在你所有显示器之外，全程不上屏，并尽量避免抢键盘焦点（被发现抢走会还回去），返回它的 hwnd。之后就配合 quiet_shot / quiet_tree / quiet_act 操作它。浏览器默认使用独立 profile，避免寄生到你已开的浏览器进程。要打开任何界面程序都用这个，不要用 Start-Process、直接运行 exe（`& .\\x.exe`）、Invoke-CimMethod Win32_Process、cmd /c start、手写 CreateProcess 或 ShowWindow——这些都会把窗口放到用户屏幕上。**只是要看网页渲染效果时（localhost、127.0.0.1、本地 HTML 文件）也用它**：只传 url 就行，自动挑浏览器离屏打开。但需要登录态、在真实站点上点选填表、或抓 DOM 数据时，用专门的浏览器工具（如 ego-browser），不要用本工具——本工具只有一个看不见的浏览器窗口，没有你的登录态，也没有 DOM API。',
     parameters: {
       type: 'object',
       properties: {
