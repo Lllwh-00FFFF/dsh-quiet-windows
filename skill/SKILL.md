@@ -41,7 +41,7 @@ description: "Use whenever a task touches a Windows GUI window — opening an ap
 3. 之后同上：`quiet_shot` / `quiet_tree` / `quiet_act`。
 4. 这个程序是用户本来就要用的，**收尾时不要 `quiet_close`**，放着就行（窗口留在屏幕外，用户点任务栏图标就回来了）。
 
-> `hwnd` 不要求来自 `quiet_launch`：`quiet_shot` / `quiet_tree` / `quiet_act` 接受任何有效句柄。别因为"这个窗口不是我启动的"就放弃插件、回去手搓 PrintWindow / ImageGrab —— 那是 2026-11 那次 507 次调用零使用的直接原因。
+> `hwnd` 不要求来自 `quiet_launch`：`quiet_shot` / `quiet_tree` / `quiet_act` 接受任何有效句柄。别因为"这个窗口不是我启动的"就放弃插件、回去手搓截图或枚举——那是最常见的失败模式。
 
 ## 预览本地网页（localhost / file://）
 
@@ -97,12 +97,12 @@ quiet_shot   { hwnd }
 
 顺带：如果这个框是"加载已解压的扩展程序"弹出来的，多半可以直接改用 `--load-extension=<目录>` 启动参数，根本不用点。
 
-## 别手搓 P/Invoke（真实踩坑记录）
+## 别手搓 P/Invoke
 
-2026-11 有一个会话，明明 6 个 `quiet_*` 工具和这个技能都在，却在 507 次工具调用里**一次都没用**。它自己的推理里写着「capture the window via quiet_shot」，下一句又变成「Simplest: get the window rect via ctypes and capture that region」，然后手写了这些：
+即使工具就在手边，模型也很容易走回"自己写脚本"的老路：推理里明明提到 `quiet_shot`，下一句却变成"最简单的是用 ctypes 拿矩形再抓屏"。典型的手搓形态：
 
 - `SetCursorPos` + `mouse_event` 点屏幕坐标（窗口一被遮住就点错）
-- `user32.ShowWindow(h, 9)` + `SetForegroundWindow` 抢前台，再 `ImageGrab.grab(bbox)` 抓屏（把用户的桌面打断了）
+- `ShowWindow` + `SetForegroundWindow` 抢前台，再 `ImageGrab.grab(bbox)` 抓屏（把用户的桌面打断了）
 - `pip install uiautomation` 再写脚本读控件树（插件里已经有了）
 - `SendKeys` 发按键（焦点不在就发到别处）
 
