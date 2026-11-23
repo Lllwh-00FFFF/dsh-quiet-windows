@@ -28,7 +28,7 @@ description: "Use whenever a task touches a Windows GUI window — opening an ap
 ### A. 程序还没开
 
 1. `quiet_launch` —— 传 `exe`，需要的话传 `args`（网址、路径、启动参数）、`width`/`height`。返回 `hwnd`。
-   **别用 `Start-Process`、`& ".\app.exe"`、`Invoke-CimMethod Win32_Process`、`cmd /c start` 启动**——它们都会把窗口放到用户屏幕上（2026-11 有个会话就是用 `& .\AutoCheckin.exe` 把用户的程序窗口弹出来的）。
+   **别用 `Start-Process`、`& ".\app.exe"`、`Invoke-CimMethod Win32_Process`、`cmd /c start` 启动**——它们都会把窗口放到用户屏幕上。
 2. `quiet_shot` —— 看一眼画面，确认已经加载好。
 3. `quiet_tree` —— 读控件树，记下目标控件的 `name` 或 `auto_id`，以及它支持的模式。
 4. `quiet_act` —— 按控件操作：输入框 `set`，按钮/链接 `invoke`，标签页和列表项 `select`，勾选框 `toggle`，树节点 `expand`。

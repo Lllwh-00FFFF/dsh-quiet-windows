@@ -436,7 +436,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_park',
     isConcurrencySafe: () => false,
-    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点），用于接管用户已经开着的程序：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act。窗口最小化时会先就地恢复但保持不激活；传 restore: true 放回原位。\n**判据：凡是需要移动窗口位置，都用这个**——自己拼窗口位置 API 会丢掉“不激活”“不改大小”这些保护，很容易把窗口顶到前台、打断用户。\n**别人替我启动的窗口也归这里**：用户的程序经常会派生自己的子进程（签到程序拉起官方客户端、安装器拉起设置窗口），那些窗口会直接出现在屏幕上；用 title 参数按标题接管它们。',
+    description: '把一个已经在运行的窗口挪到所有显示器之外（不激活、不改大小、不抢焦点），用于接管用户已经开着的程序：先 quiet_park，再 quiet_shot / quiet_tree / quiet_act。窗口最小化时会先就地恢复但保持不激活；传 restore: true 放回原位。\n**判据：凡是需要移动窗口位置，都用这个**——自己拼窗口位置 API 会丢掉“不激活”“不改大小”这些保护，很容易把窗口顶到前台、打断用户。\n**别人替我启动的窗口也归这里**：很多程序会在运行时派生自己的子进程，子进程的窗口会直接出现在用户屏幕上；用 title 参数按标题接管它们。',
     parameters: {
       type: 'object',
       properties: {

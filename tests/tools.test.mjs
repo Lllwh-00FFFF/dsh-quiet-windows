@@ -325,16 +325,16 @@ test('park 可以按标题接管“别人启动的窗口”', async () => {
   const seen = [];
   const spawn = scriptedSpawn((argv) => {
     seen.push(argv);
-    return { ok: true, hwnd: 4242, pid: 999, title: 'Hyperdown', before: [1, 2, 3, 4], after: [-9, -9, -1, -1], offscreen: true };
+    return { ok: true, hwnd: 4242, pid: 999, title: 'Example Child Window', before: [1, 2, 3, 4], after: [-9, -9, -1, -1], offscreen: true };
   });
   const { tools, ctx } = harness(spawn);
   const { apply } = await import(MODULE);
   apply(ctx, {});
-  const value = await tools.get('quiet_park').execute({ title: 'Hyperdown' }, EXEC);
+  const value = await tools.get('quiet_park').execute({ title: 'Example Child Window' }, EXEC);
   assert.equal(value.ok, true);
   const parkArgv = seen.find((argv) => argv.includes('park'));
   assert.ok(parkArgv.includes('--title'), '要用 --title 找窗口');
-  assert.equal(parkArgv[parkArgv.indexOf('--title') + 1], 'Hyperdown');
+  assert.equal(parkArgv[parkArgv.indexOf('--title') + 1], 'Example Child Window');
 });
 
 test('park 既不给 hwnd 也不给 title 时报错', async () => {
