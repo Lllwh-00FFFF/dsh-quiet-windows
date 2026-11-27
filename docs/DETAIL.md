@@ -11,7 +11,7 @@
 | `quiet_park` | 把已经在运行的窗口挪到屏幕外，不激活、不改大小 —— 用来接管用户自己开的程序 |
 | `quiet_shot` | 截图（PrintWindow）：窗口在屏幕外、被完全遮挡都拿得到画面 |
 | `quiet_tree` | 读 UI Automation 控件树：类型、文字、class、AutomationId、可用模式 |
-| `quiet_act` | 按控件执行 invoke / set / select / toggle / expand，不依赖前台与坐标 |
+| `quiet_act` | 按控件执行 invoke / set / select / toggle / expand，不依赖前台与坐标；控件没有名字时用 `path` 定位 |
 | `quiet_close` | 收尾，先正常关闭再按需强杀 |
 
 `hwnd` 不要求由 `quiet_launch` 产生，`quiet_shot` / `quiet_tree` / `quiet_act` / `quiet_close` 接受任何有效句柄。

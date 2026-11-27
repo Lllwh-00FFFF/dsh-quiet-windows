@@ -287,7 +287,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_launch',
     isConcurrencySafe: () => false,
-    description: '在屏幕外启动并接管一个 GUI 窗口：从创建起就停在所有显示器之外，不上屏、不抢键盘焦点，返回 hwnd。之后用 quiet_shot / quiet_tree / quiet_act 操作它。\n**判据：凡是会让窗口出现在用户屏幕上的启动方式，都不能用**——不管你用哪个命令、哪个 API、哪种调用形式（命令行工具、脚本里的调用运算符、进程创建 API、shell 启子进程、双击式调用都算），也包括你自己刚打包出来、想“跑一下看看”的 exe。要在用户电脑上跑界面程序，一律从这里启动。\n只给 url 时自动挑浏览器离屏打开网页；但需要用户登录态、在真实站点上交互或抓 DOM 数据时，改用专门的浏览器工具（如 ego-browser）——本工具的浏览器是独立 profile，没有登录态，也没有 DOM API。',
+    description: '在屏幕外启动并接管一个 GUI 窗口：从创建起就停在所有显示器之外，不上屏、不抢键盘焦点，返回 hwnd。之后用 quiet_shot / quiet_tree / quiet_act 操作它。\n**判据：凡是会让窗口出现在用户屏幕上的启动方式，都不能用**——不管你用哪个命令、哪个 API、哪种调用形式（命令行工具、脚本里的调用运算符、进程创建 API、shell 启子进程、双击式调用都算），也包括你自己刚打包出来、想“跑一下看看”的 exe。要在用户电脑上跑界面程序，一律从这里启动。\n只给 url 时自动挑浏览器离屏打开网页；但需要用户登录态、在真实站点上交互或抓 DOM 数据时，改用专门的浏览器工具（如 ego-browser）——本工具的浏览器是独立 profile，没有登录态，也没有 DOM API。\n**网页交互不要用会弹出可见窗口的桌面自动化工具**：那类工具为了点网页会开一个真窗口，直接盖在用户屏幕上；优先选不占屏幕的通道（headless 浏览器工具，或用本工具把窗口挪到屏幕外之后按控件操作）。',
     parameters: {
       type: 'object',
       properties: {
@@ -600,7 +600,7 @@ function buildTools(ctx, cfg) {
   tools.push({
     name: 'quiet_act',
     isConcurrencySafe: () => false,
-    description: '对控件执行一次操作，走控件自身的 UI Automation 模式（invoke / set / select / toggle / expand / collapse）：不需要窗口在前台，也不用坐标点击。按 name / exact_name / auto_id / class / type 定位，至少给一个。\n**判据：凡是依赖鼠标位置、键盘焦点或窗口可见性的操作都不能用**——离屏窗口的坐标会被系统夹回屏幕，按键会打进用户当前正在用的窗口。\n动作期间若键盘焦点被抢会尽量还回去：是“尽量不打扰”，不是零干扰保证。',
+    description: '对控件执行一次操作，走控件自身的 UI Automation 模式（invoke / set / select / toggle / expand / collapse）：不需要窗口在前台，也不用坐标点击。\n**定位方式二选一**：按属性（name / exact_name / auto_id / class / type），或按控件树路径（path，就是 quiet_tree 输出里每行开头的 `0.3.2` 这种编号）。Qt/QML、Electron、Flutter 这类应用的控件经常没有名字，但 quiet_tree 会给出每个节点的 path —— 用 path 就能照样操作，不必把窗口搬到屏幕上，也不必按坐标点。\n**判据：凡是依赖鼠标位置、键盘焦点或窗口可见性的操作都不能用**——离屏窗口的坐标会被系统夹回屏幕，按键会打进用户当前正在用的窗口。\n动作期间若键盘焦点被抢会尽量还回去：是“尽量不打扰”，不是零干扰保证。',
     parameters: {
       type: 'object',
       properties: {
@@ -611,6 +611,7 @@ function buildTools(ctx, cfg) {
           description: 'invoke=按按钮/链接；set=写输入框（配 value）；select=选中列表项或标签页；toggle=勾选；expand/collapse=展开折叠。',
         },
         value: { type: 'string', description: 'op 为 set 时写入的文本。' },
+        path: { type: 'string', description: '控件树路径，如 "0.3.2"（quiet_tree 每行开头的编号）。控件没有名字时用它。' },
         name: { type: 'string', description: '控件名包含这段文字（模糊匹配）。' },
         exact_name: { type: 'string', description: '控件名完全等于这段文字。' },
         auto_id: { type: 'string', description: '控件的 AutomationId。' },
@@ -624,7 +625,7 @@ function buildTools(ctx, cfg) {
       if (rec.ok !== true) {
         const lines = [failText(rec, '操作失败')];
         if (rec.selector !== undefined) lines.push('选择器：' + JSON.stringify(rec.selector));
-        lines.push('下一步：先 quiet_tree 确认控件名与可用模式，再重试。');
+        lines.push('下一步：先 quiet_tree 确认控件名与可用模式（或改用 path 定位），再重试。');
         return text(lines);
       }
       const before = rec.foreground_before;
@@ -632,10 +633,10 @@ function buildTools(ctx, cfg) {
       const focusLine = before === after
         ? '焦点：没有变化'
         : (rec.foreground_restored === true ? '焦点：曾移走，已还原' : '焦点：被移走且未能还原');
-      return text([
-        '已执行 ' + rec.op + ' → ' + (rec.type ?? '') + ' "' + (rec.target ?? '') + '"',
-        focusLine,
-      ]);
+      const done = ['已执行 ' + rec.op + ' → ' + (rec.type ?? '') + ' "' + (rec.target ?? '') + '"'];
+      if (typeof rec.path === 'string') done.push('控件路径：' + rec.path);
+      done.push(focusLine);
+      return text(done);
     } },
     timeoutMs: 60000,
     async execute(rawArgs, exec) {
@@ -646,13 +647,13 @@ function buildTools(ctx, cfg) {
       const argv = ['act', '--hwnd', String(hwnd), '--op', op];
       const value = optionalString(args, 'value');
       if (value !== undefined) argv.push('--value', value);
-      const map = [['name', '--name'], ['exact_name', '--exact-name'], ['class', '--class'], ['auto_id', '--auto-id'], ['type', '--type']];
+      const map = [['path', '--path'], ['name', '--name'], ['exact_name', '--exact-name'], ['class', '--class'], ['auto_id', '--auto-id'], ['type', '--type']];
       for (const [key, flag] of map) {
         const v = optionalString(args, key);
         if (v !== undefined) argv.push(flag, v);
       }
       if (!map.some(([key]) => optionalString(args, key) !== undefined)) {
-        throw new Error('至少给出一个定位条件：name / exact_name / class / auto_id / type。');
+        throw new Error('至少给出一个定位条件：path / name / exact_name / class / auto_id / type。');
       }
       return runHelper(ctx, cfg, withExpectedPid(argv, hwnd), { cwd: sessionCwd(exec), signal: exec?.signal });
     },

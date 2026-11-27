@@ -374,3 +374,31 @@ test('启动记录：launch 会带上 --journal，失败时补一次 reap', asyn
   const journalArg = launchArgv[launchArgv.indexOf('--journal') + 1];
   assert.equal(reapArgv[reapArgv.indexOf('--journal') + 1], journalArg, 'reap 要用同一份启动记录');
 });
+
+test('quiet_act 支持按控件树路径定位（无名控件也能点）', async () => {
+  const seen = [];
+  const spawn = scriptedSpawn((argv) => {
+    seen.push(argv);
+    return { ok: true, op: 'invoke', path: '0.3.2', target: '', type: 'ButtonControl',
+             foreground_before: 1, foreground_after: 1, foreground_restored: false };
+  });
+  const { tools, ctx } = harness(spawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  const value = await tools.get('quiet_act').execute({ hwnd: 42, op: 'invoke', path: '0.3.2' }, EXEC);
+  assert.equal(value.ok, true);
+  const actArgv = seen.find((argv) => argv.includes('act'));
+  assert.ok(actArgv.includes('--path'), '要把 path 传给 helper');
+  assert.equal(actArgv[actArgv.indexOf('--path') + 1], '0.3.2');
+});
+
+test('quiet_act 既不给属性也不给 path 时报错', async () => {
+  const spawn = scriptedSpawn(() => ({ ok: true }));
+  const { tools, ctx } = harness(spawn);
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  await assert.rejects(
+    () => tools.get('quiet_act').execute({ hwnd: 42, op: 'invoke' }, EXEC),
+    /至少给出一个定位条件/,
+  );
+});

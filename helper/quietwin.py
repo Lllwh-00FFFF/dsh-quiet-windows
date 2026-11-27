@@ -515,11 +515,30 @@ def walk(ctrl, depth: int, out: list, path: str = "0") -> None:
 
 
 def find(ctrl, budget: int = 6000, max_depth: int = 14, **want):
-    """在树里按 name/class/auto_id/type 找一个控件，返回 (control, path)。
+    """在树里按 path / name / class / auto_id / type 找一个控件，返回 (control, path)。
 
     遍历**所有**子节点（不再限定几种容器类型）——按钮、CustomControl 底下也常挂着内容，
     只钻"容器白名单"会漏。规模靠 budget（节点预算）与 max_depth 兜住。
     """
+    want_path = want.get("path")
+    if want_path:
+        # 按树路径定位：Qt/QML、Electron 这类应用的控件经常没有名字，
+        # 但 quiet_tree 会给出每个节点的 path，照着走就能拿到。
+        parts = [p for p in str(want_path).split(".") if p != ""]
+        if parts and parts[0] == "0":
+            parts = parts[1:]
+        cur = ctrl
+        walked = "0"
+        for part in parts:
+            try:
+                index = int(part)
+                kids = cur.GetChildren()
+                cur = kids[index]
+            except Exception as exc:
+                return None, None
+            walked = f"{walked}.{part}"
+        return cur, walked
+
     if not any(want.get(k) for k in ("name", "exact_name", "class", "auto_id", "type")):
         return None, None
     queue = [(ctrl, "0", 0)]
@@ -841,6 +860,8 @@ def main() -> int:
     p.add_argument("--exact-name", default=None)
     p.add_argument("--class", dest="class_", default=None)
     p.add_argument("--auto-id", default=None)
+    p.add_argument("--path", dest="path_", default=None,
+                   help="控件树路径（如 0.3.2），用于没有名字的控件")
     p.add_argument("--type", dest="type_", default=None)
     p.add_argument("--expect-pid", type=int, default=None)
 
@@ -922,8 +943,8 @@ def main() -> int:
     elif a.cmd == "act":
         res = verify_pid(a.hwnd, a.expect_pid)
         if res is None:
-            selector = {"name": a.name, "exact_name": a.exact_name, "class": a.class_,
-                        "auto_id": a.auto_id, "type": a.type_}
+            selector = {"path": a.path_, "name": a.name, "exact_name": a.exact_name,
+                        "class": a.class_, "auto_id": a.auto_id, "type": a.type_}
             res = act(a.hwnd, a.op, a.value, {k: v for k, v in selector.items() if v})
     elif a.cmd == "close":
         res = verify_pid(a.hwnd, a.expect_pid)

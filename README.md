@@ -13,7 +13,7 @@
 | `quiet_park` | 把已经开着的窗口挪到屏幕外（不激活、不改大小），接管用户自己的程序 |
 | `quiet_shot` | 截图（窗口在屏幕外或完全被遮挡都拿得到） |
 | `quiet_tree` | 读 UI Automation 控件树 |
-| `quiet_act` | 按控件执行 invoke / set / select / toggle / expand |
+| `quiet_act` | 按控件执行 invoke / set / select / toggle / expand；支持用属性或控件树路径（`0.3.2`）定位 |
 | `quiet_close` | 收尾关闭；共享进程的窗口不会被强杀 |
 
 `hwnd` 不要求来自 `quiet_launch`：`quiet_windows` 列出的任何窗口，或者你自己用别的方式找到的句柄，都可以直接交给 `quiet_shot` / `quiet_tree` / `quiet_act`。屏幕上已经开着的窗口先 `quiet_park` 挪走，再操作。
