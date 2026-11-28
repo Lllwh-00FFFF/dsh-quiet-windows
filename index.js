@@ -17,7 +17,18 @@ import { randomUUID } from 'node:crypto';
 import { join, resolve as resolvePath } from 'node:path';
 
 export const name = 'quiet-windows';
-export const inject = ['subprocess', 'tools'];
+export const inject = ['subprocess', 'tools', 'systemPrompt'];
+
+/**
+ * 常驻策略：写进系统提示，先于任何工具选择生效。
+ * 不点名任何产品、也不限制用哪个工具——它约束的是"结果"：别把东西推到用户面前。
+ */
+const DESKTOP_POLICY = [
+  '操作这台电脑时，屏幕、鼠标、键盘和输入焦点都属于用户。',
+  '用任何工具动它们之前（桌面自动化、浏览器自动化、截图、启动程序都算），',
+  '先判断这个动作会不会把窗口、指针或输入焦点带到用户面前：',
+  '能后台完成就后台完成；必须上屏时先说明理由，并把它占据的时间压到最短。',
+].join('');
 
 const HELPER = fileURLToPath(new URL('./helper/quietwin.py', import.meta.url));
 const STDOUT_LIMIT = 4 * 1024 * 1024;
@@ -718,6 +729,23 @@ export function apply(ctx, config) {
   try {
     for (const definition of buildTools(ctx, cfg)) {
       disposers.push(ctx.tools.register(definition));
+    }
+    // 常驻策略：进系统提示，先于任何工具选择。缺失该服务时静默跳过，不影响工具本身。
+    const prompt = ctx.systemPrompt;
+    if (prompt !== undefined && typeof prompt.section === 'function') {
+      let order = 0;
+      try {
+        order = typeof prompt.getSectionOrder === 'function'
+          ? prompt.getSectionOrder('TOOL_COMPUTER_USE')
+          : 0;
+      } catch {
+        order = 0;
+      }
+      disposers.push(prompt.section({
+        name: 'quiet-windows:keep-user-desktop',
+        order: Number.isFinite(order) ? order : 0,
+        text: DESKTOP_POLICY,
+      }));
     }
   } catch (error) {
     for (const dispose of disposers) dispose();

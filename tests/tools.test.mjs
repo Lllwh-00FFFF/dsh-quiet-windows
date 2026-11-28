@@ -14,6 +14,7 @@ const MODULE = new URL('../index.js', import.meta.url).href;
 
 function harness(spawnImpl) {
   const tools = new Map();
+  const sections = [];
   const ctx = {
     subprocess: { spawn: spawnImpl },
     tools: {
@@ -22,9 +23,16 @@ function harness(spawnImpl) {
         return () => tools.delete(def.name);
       },
     },
+    systemPrompt: {
+      getSectionOrder: () => 400,
+      section(section) {
+        sections.push(section);
+        return () => sections.splice(sections.indexOf(section), 1);
+      },
+    },
     effect() {},
   };
-  return { tools, ctx };
+  return { tools, ctx, sections };
 }
 
 /** 永远失败的 spawn：模拟「这台机器没有装好依赖的 Python」。 */
@@ -401,4 +409,34 @@ test('quiet_act 既不给属性也不给 path 时报错', async () => {
     () => tools.get('quiet_act').execute({ hwnd: 42, op: 'invoke' }, EXEC),
     /至少给出一个定位条件/,
   );
+});
+
+test('常驻策略写进系统提示（先于任何工具选择生效）', async () => {
+  const { ctx, sections } = harness(scriptedSpawn(() => ({ ok: true })));
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  assert.equal(sections.length, 1, '应该注册一段常驻策略');
+  const [section] = sections;
+  assert.equal(section.name, 'quiet-windows:keep-user-desktop');
+  assert.equal(typeof section.order, 'number');
+  const text = String(section.text);
+  assert.match(text, /都属于用户/, '要说明屏幕/鼠标/键盘属于用户');
+  assert.match(text, /任何工具/, '要覆盖所有工具，而不只是本插件');
+  assert.match(text, /后台/, '要给出默认做法：能后台就后台');
+  // 策略必须与具体产品无关
+  for (const banned of ['wincu', 'ego-browser', 'Hyperdown']) {
+    assert.equal(text.includes(banned), false, '策略里不能出现具体产品名：' + banned);
+  }
+});
+
+test('没有 systemPrompt 服务时插件照样可用', async () => {
+  const tools = new Map();
+  const ctx = {
+    subprocess: { spawn: scriptedSpawn(() => ({ ok: true })) },
+    tools: { register: (def) => { tools.set(def.name, def); return () => {}; } },
+    effect() {},
+  };
+  const { apply } = await import(MODULE);
+  apply(ctx, {});
+  assert.equal(tools.size, 7, '工具照常注册');
 });
